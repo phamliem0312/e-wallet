@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/events/identity/CustomerRegistered/v1.json",
+  "title": "CustomerRegistered v1 (data)",
+  "description": "Phần data của CloudEvents. Envelope: source=identity, type=CustomerRegistered, subject=customerId, aggregateversion=customer.version. Topic identity.events, key=customerId. Consumer: wallet (mở ví và tạo customer_directory), audit. Không chứa mật khẩu, họ tên đầy đủ, OTP hay thiết bị.",
+  "type": "object",
+  "required": ["customerId", "phone", "displayMasked"],
+  "properties": {
+    "customerId": { "type": "string", "format": "uuid" },
+    "phone": { "type": "string", "pattern": "^\\+84[0-9]{9}$", "description": "E.164 đã chuẩn hoá; wallet dùng để tra người nhận" },
+    "displayMasked": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Tên hiển thị đã che, do identity tính theo quy tắc che tên (OQ-009, OQ-047); wallet lưu vào customer_directory.display_masked" }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "customerId": "0193f2a4-7c1e-7b2a-9f00-0000000000d1",
+      "phone": "+84900000001",
+      "displayMasked": "NGUYEN V*** A"
+    }
+  ]
+}

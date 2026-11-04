@@ -60,6 +60,12 @@ components:
         - BANK_LINK_INVALID
         - HOLDER_NAME_MISMATCH
         - INTERNAL_ERROR
+        - INVALID_CREDENTIALS
+        - ACCOUNT_TEMP_LOCKED
+        - ACCOUNT_LOCKED
+        - PHONE_ALREADY_REGISTERED
+        - CONSENT_REQUIRED
+        - OTP_SEND_FAILED
     Problem:
       type: object
       description: RFC 9457 Problem Details. `title`/`detail` không dùng làm thông điệp cho người dùng; frontend dựng thông điệp từ `code` và `params`.
@@ -84,6 +90,9 @@ components:
             Dữ liệu để dựng thông điệp, theo `code`:
             - AMOUNT_OUT_OF_RANGE → `minAmount`
             - CHALLENGE_INVALID → `attemptsRemaining` (đề xuất OQ-019)
+            - CHALLENGE_REQUIRED (đăng nhập từ thiết bị mới) → dữ liệu challenge: `challengeId`, `factor`, `expiresAt`, `destinationMasked`, `resendAfter`, `attemptsRemaining`
+            - ACCOUNT_TEMP_LOCKED → `retryAfterSeconds`
+            - CONSENT_REQUIRED → `currentTermsVersion`
           additionalProperties: true
         errors:
           type: array
@@ -139,6 +148,12 @@ components:
             $ref: '#/components/schemas/Problem'
     Problem422:
       description: Vi phạm quy tắc nghiệp vụ trước khi tạo lệnh (xem mô tả của từng operation).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem503:
+      description: Dịch vụ phụ thuộc không dùng được (BANK_UNAVAILABLE, OTP_SEND_FAILED).
       content:
         application/problem+json:
           schema:

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/events/identity/CustomerUpdated/v1.json",
+  "title": "CustomerUpdated v1 (data)",
+  "description": "Phần data của CloudEvents. Phát khi khách đổi số điện thoại (F-ACC-01.EV-02). Envelope: source=identity, type=CustomerUpdated, subject=customerId, aggregateversion=customer.version. Topic identity.events, key=customerId. Mang trạng thái đầy đủ sau thay đổi, không phải phần chênh lệch, để consumer áp event có version mới hơn mà không cần event trước. Consumer: wallet (cập nhật customer_directory), audit.",
+  "type": "object",
+  "required": ["customerId", "phone", "displayMasked"],
+  "properties": {
+    "customerId": { "type": "string", "format": "uuid" },
+    "phone": { "type": "string", "pattern": "^\\+84[0-9]{9}$", "description": "SĐT mới, E.164" },
+    "displayMasked": { "type": "string", "minLength": 1, "maxLength": 64 }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "customerId": "0193f2a4-7c1e-7b2a-9f00-0000000000d1",
+      "phone": "+84900000003",
+      "displayMasked": "NGUYEN V*** A"
+    }
+  ]
+}

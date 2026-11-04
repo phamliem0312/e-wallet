@@ -2,7 +2,9 @@
 
 Đi kèm [thiết kế chính](2026-11-04-ewallet-design.md). Đây là hợp đồng ở mức thiết kế. Khi code, nguồn sự thật là thư mục [`source-code/contracts/`](../../source-code/contracts/): OpenAPI cho từng service và JSON Schema cho event. Frontend và các service sinh client từ đó.
 
-**Đã có hợp đồng (v0.1, phần F-PAY-03, lint qua 2026-11-04):** `openapi/common.yaml`, `openapi/payment/public.yaml` (`/transfers/preview`, `/transfers`, `/orders/{orderId}`), `openapi/wallet/public.yaml` (`/wallet`, `/transfers/recipient`), `openapi/identity/public.yaml` (`/challenges`), `events/payment/PaymentSucceeded/v1.json`, `events/payment/PaymentFailed/v1.json`.
+**Đã có hợp đồng (lint qua 2026-11-04):**
+- Phần F-PAY-03 (v0.1): `openapi/common.yaml`, `openapi/payment/public.yaml` (`/transfers/preview`, `/transfers`, `/orders/{orderId}`), `openapi/wallet/public.yaml` (`/wallet`, `/transfers/recipient`), `events/payment/PaymentSucceeded/v1.json`, `events/payment/PaymentFailed/v1.json`.
+- Phần F-ACC-01 (v0.2): `openapi/identity/public.yaml` (`/auth/*`, `/me/password`, `/me/phone`, `/me/devices`, `/me/consents`, `/challenges`), `openapi/identity/internal.yaml` (`/internal/challenges/{id}/verify`), `openapi/notification/internal.yaml` (`/internal/otp-messages`), `events/identity/CustomerRegistered/v1.json`, `events/identity/CustomerUpdated/v1.json`. Chưa có hợp đồng: `GET /me`, `POST /me/consents`, thông báo bảo mật không phải OTP, `CustomerLocked` (xem OQ-041, 048, 051).
 
 ## 1. Quy ước chung
 
@@ -35,14 +37,15 @@
 | HTTP | `code` | Khi nào |
 |---|---|---|
 | 400 | `VALIDATION_ERROR`, `IDEMPOTENCY_KEY_REQUIRED` | Input sai hoặc thiếu |
-| 401 | `UNAUTHENTICATED`, `TOKEN_EXPIRED` | |
-| 403 | `FORBIDDEN`, `KYC_REQUIRED`, `WALLET_FROZEN` | |
+| 401 | `UNAUTHENTICATED`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS` | `INVALID_CREDENTIALS`: sai SĐT/mật khẩu (kể cả mật khẩu hiện tại khi đổi mật khẩu). BFF phân biệt với phiên hết hạn bằng `code`, không bằng HTTP status |
+| 403 | `FORBIDDEN`, `KYC_REQUIRED`, `WALLET_FROZEN`, `ACCOUNT_TEMP_LOCKED`, `ACCOUNT_LOCKED` | `ACCOUNT_TEMP_LOCKED` kèm `params.retryAfterSeconds`. `FORBIDDEN` do CSRF là của BFF (trình duyệt ↔ BFF), không phải của `identity` |
 | 404 | `NOT_FOUND`, `RECIPIENT_NOT_FOUND` | |
-| 409 | `IDEMPOTENCY_KEY_REUSED`, `FEE_CHANGED`, `STATE_CONFLICT` | |
-| 422 | `AMOUNT_OUT_OF_RANGE`, `RECIPIENT_UNAVAILABLE`, `CHALLENGE_REQUIRED`, `CHALLENGE_INVALID`, `BANK_LINK_INVALID`, `HOLDER_NAME_MISMATCH` | Từ chối trước khi tạo order |
+| 409 | `IDEMPOTENCY_KEY_REUSED`, `FEE_CHANGED`, `STATE_CONFLICT`, `PHONE_ALREADY_REGISTERED` | |
+| 422 | `AMOUNT_OUT_OF_RANGE`, `RECIPIENT_UNAVAILABLE`, `CHALLENGE_REQUIRED`, `CHALLENGE_INVALID`, `CONSENT_REQUIRED`, `BANK_LINK_INVALID`, `HOLDER_NAME_MISMATCH` | Từ chối trước khi tạo order. `CHALLENGE_REQUIRED` khi đăng nhập thiết bị mới mang dữ liệu challenge trong `params`; `CONSENT_REQUIRED` mang `params.currentTermsVersion` |
 | (200, trong `order.failureCode`) | `INSUFFICIENT_BALANCE`, `LIMIT_EXCEEDED`, `BANK_REJECTED`... | Order đã tạo và `FAILED`; xem "Quy ước response của lệnh tiền". Chỉ các API *nội bộ* (`/internal/**`) trả 422 cho hai mã đầu |
 | 429 | `RATE_LIMITED` | Kèm header `Retry-After` |
-| 503 | `BANK_UNAVAILABLE` | Ngân hàng bảo trì hoặc circuit đang mở |
+| 500 | `INTERNAL_ERROR` | Lỗi không lường trước; không lộ nội dung exception |
+| 503 | `BANK_UNAVAILABLE`, `OTP_SEND_FAILED` | Ngân hàng bảo trì hoặc circuit đang mở; không bàn giao được OTP cho `notification` |
 
 ---
 
@@ -64,18 +67,26 @@ Routing của `api-gateway`:
 `GET /wallet` trả số dư: `wallet` gọi `ledger` để lấy số dư (số dư chỉ có ở `ledger`).
 
 ### Auth & identity
-| Method | Path | Idempotent | Mô tả |
+Hợp đồng chi tiết: [identity/public.yaml](../../source-code/contracts/openapi/identity/public.yaml) (SRS F-ACC-01). Người gọi là BFF; token trong `AuthSession` do BFF giữ trong cookie httpOnly. Các endpoint này không phải lệnh tiền nên không dùng `Idempotency-Key`; gửi lại an toàn theo từng endpoint. Access token mang claim `sid` (id token family) để xác định "phiên hiện tại".
+
+| Method | Path | Auth | Mô tả |
 |---|---|---|---|
-| POST | `/auth/register` | — | `{phone}` → gửi OTP, trả `challengeId` |
-| POST | `/auth/register/verify` | — | `{challengeId, otp, password, fullName}` → tạo khách, trả token |
-| POST | `/auth/login` | — | `{phone, password, deviceFingerprint}` → token, hoặc `CHALLENGE_REQUIRED` + `challengeId` nếu thiết bị lạ |
-| POST | `/auth/login/verify` | — | `{challengeId, otp}` → token |
-| POST | `/auth/refresh` | — | Xoay refresh token |
-| POST | `/auth/logout` | — | Thu hồi token family hiện tại |
-| GET | `/me` | — | Hồ sơ, KYC tier, trạng thái |
-| GET | `/me/devices` · DELETE `/me/devices/{id}` | — | Quản lý thiết bị |
-| GET | `/me/consents` · POST `/me/consents` | — | Xem/cập nhật đồng ý theo từng mục đích (`{purpose, termsVersion, granted}`) |
-| POST | `/challenges` | — | `{purpose, payload}` → `201 {challengeId, factor: OTP\|FACE, expiresAt, destinationMasked?, resendAfter?, attemptsRemaining?}` (3 trường cuối là đề xuất cho OQ-019). `payload` là nội dung lệnh, server tự hash |
+| POST | `/auth/register` | — | `{phone}` → `201 Challenge`. SĐT đã đăng ký vẫn `201` cùng cấu trúc, không gửi OTP (OQ-031) |
+| POST | `/auth/register/verify` | — | `{challengeId, otp, password, fullName, termsVersion, deviceFingerprint}` → `201 AuthSession`. Thiếu hoặc sai `termsVersion` → `CONSENT_REQUIRED` |
+| POST | `/auth/login` | — | `{phone, password, deviceFingerprint}` → `200 AuthSession`, hoặc `422 CHALLENGE_REQUIRED` (challenge trong `params`) nếu thiết bị lạ |
+| POST | `/auth/login/verify` | — | `{challengeId, otp, deviceFingerprint}` → `200 AuthSession` |
+| POST | `/auth/refresh` | — | `{refreshToken}` → `200 AuthSession`; xoay vòng, dùng lại token cũ thì thu hồi cả family |
+| POST | `/auth/logout` | Khách | Thu hồi token family hiện tại (`sid`) → `204` |
+| POST | `/auth/password/forgot` | — | `{phone}` → `201 Challenge`, luôn cùng cấu trúc dù SĐT có tài khoản hay không |
+| POST | `/auth/password/reset` | — | `{challengeId, otp, newPassword}` → `204`; thu hồi mọi phiên |
+| POST | `/me/password` | Khách | `{currentPassword, newPassword}` → `204`; thu hồi các phiên khác |
+| POST | `/me/phone` | Khách | `{newPhone, faceChallengeId, otpChallengeId, otp}` → `204`. Cả hai challenge cấp qua `/challenges` với `purpose = CHANGE_PHONE` |
+| GET | `/me/devices` | Khách | `{items: [{deviceId, label?, lastSeenAt, isCurrent}]}`, không phân trang |
+| DELETE | `/me/devices/{deviceId}` | Khách | Thu hồi tin cậy thiết bị → `204`; không thuộc khách → `404` |
+| GET | `/me/consents` | Khách | `{items: [{purpose, termsVersion, granted, createdAt}]}`, mỗi mục đích một mục |
+| POST | `/challenges` | Khách | `{purpose, factor?, payload}` với `purpose ∈ {P2P, CHANGE_PHONE}` → `201 {challengeId, factor, expiresAt, destinationMasked?, resendAfter?, attemptsRemaining?}` (3 trường cuối là đề xuất cho OQ-019). `payload` là nội dung lệnh, server tự hash. OTP của `P2P` gửi tới SĐT đăng ký của khách; OTP của `CHANGE_PHONE` gửi tới `payload.newPhone` |
+| GET | `/me` | Khách | Hồ sơ, KYC tier, trạng thái. **Chưa có hợp đồng**: F-ACC-01 chưa có FR cho nó (OQ-048) |
+| POST | `/me/consents` | Khách | `{purpose, termsVersion, granted}`. **Chưa có hợp đồng**: chờ OQ-041 và F-CMP-01 |
 
 ### KYC
 | Method | Path | Mô tả |
@@ -179,7 +190,7 @@ Chỉ các service được liệt kê ở cột "Được gọi bởi" mới g�
 | `limit` | `POST /internal/reservations` `{id=orderId, customerId, walletId, txType, amount, at}` | `id` | `payment` | `200 RESERVED` / `422 LIMIT_EXCEEDED {scope, remaining}` |
 | | `GET /internal/limits/{walletId}/remaining` | — | `payment` (preview) | |
 | `fee` | `POST /internal/quotes` `{txType, amount, bankCode?, at}` | — | `payment` | `{fee, feeRuleId}` |
-| `identity` | `POST /internal/challenges/{id}/verify` `{otp, payloadHash, consumerRef}` | `(id, consumerRef)`: challenge chỉ phục vụ **một** `consumerRef` (idempotency key của lệnh); verify lại với cùng ref → `200` | `payment`, `bank-gateway` | `200` / `422 CHALLENGE_INVALID` |
+| `identity` | `POST /internal/challenges/{id}/verify` `{otp?, payload, consumerRef}` ([hợp đồng](../../source-code/contracts/openapi/identity/internal.yaml)) | `(id, consumerRef)`: challenge chỉ phục vụ **một** `consumerRef` (idempotency key của lệnh); verify lại với cùng ref → `200` | `payment`, `bank-gateway` | `200 {factor}` / `422 CHALLENGE_INVALID`. `factor` để `payment` so với `requiredFactor` (OQ-049) |
 | `wallet` | `GET /internal/recipients?phone=` | — | `payment` | `{walletId, ledgerAccountCode, status, displayMasked}` |
 | | `GET /internal/wallets/{id}` | — | `payment`, `bank-gateway` | |
 | `payment` | `GET /internal/orders/open?walletId=` | — | `wallet` (đóng ví) | Số lệnh `PROCESSING`/`UNKNOWN` |
@@ -191,7 +202,7 @@ Chỉ các service được liệt kê ở cột "Được gọi bởi" mới g�
 | | `GET /internal/safeguard-balances` | — | `recon` | Số dư thực của từng ngân hàng |
 | `kyc` | `POST /internal/face-verifications` `{verificationId, customerId, selfie}` | `verificationId` | `identity` (step-up `FACE`) | `{passed, livenessScore, matchScore}` |
 | `aml` | `POST /internal/screenings` `{subjectRef, fullName, dob, idNumber, nationality}` | `subjectRef` | `kyc` | `Clear / PotentialMatch / Error` |
-| `notification` | `POST /internal/otp-messages` `{idempotencyKey, channel, recipient, code}` | `idempotencyKey` | `identity` | `202`. Chỉ dành cho OTP; mã không được ghi log hay lưu dạng rõ |
+| `notification` | `POST /internal/otp-messages` `{idempotencyKey, channel, recipient, code, purpose, expiresAt}` ([hợp đồng](../../source-code/contracts/openapi/notification/internal.yaml)) | `idempotencyKey` | `identity` | `202` (đã nhận để gửi, không đảm bảo đã tới tay khách) / `503 OTP_SEND_FAILED`. Chỉ dành cho OTP; mã không được ghi log hay lưu dạng rõ. `purpose`, `expiresAt` để dựng nội dung tin |
 
 ---
 
@@ -207,7 +218,7 @@ Mỗi service publish vào topic `<service>.events`, key = id của aggregate. E
 
 | Topic | Event | Dữ liệu chính | Consumer |
 |---|---|---|---|
-| `identity.events` | `CustomerRegistered`, `CustomerUpdated`, `CustomerLocked` | `customerId`, `phone`, `displayMasked` | `wallet` (customer_directory + mở ví), `audit` |
+| `identity.events` | `CustomerRegistered` ([v1](../../source-code/contracts/events/identity/CustomerRegistered/v1.json)), `CustomerUpdated` ([v1](../../source-code/contracts/events/identity/CustomerUpdated/v1.json); phát khi đổi SĐT), `CustomerLocked` (chưa có hợp đồng, thuộc F-BO-02) | `customerId`, `phone` (E.164), `displayMasked` (do `identity` tính, OQ-047). `CustomerUpdated` mang trạng thái đầy đủ, không phải phần chênh lệch | `wallet` (customer_directory + mở ví), `audit` |
 | `kyc.events` 🔒 | `KycTierChanged` | `customerId`, `walletId?`, `tier`, `fullNameNorm`, `idNumberHash` | `identity`, `limit`, `bank-gateway`, `wallet`, `notification`, `audit` |
 | | `KycRejected` | `customerId`, `reasonCode` | `notification`, `audit` |
 | `aml.events` | `AmlHitDetected` | `subjectRef`, `listNames` | `kyc`, `audit` |

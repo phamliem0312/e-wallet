@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Trạng thái | Draft |
-| Phiên bản | 0.1 |
+| Phiên bản | 0.3 |
 | Ngày | 2026-11-04 |
 | Yêu cầu nguồn (sở hữu) | FR-ID-01, FR-ID-05, FR-ID-06 |
 | Yêu cầu liên quan | FR-ID-04 (cấp định danh mặc định), NFR-S-01, NFR-S-02, NFR-S-03, NFR-S-04, NFR-L-03, NFR-O-02, NFR-P-01 |
@@ -338,7 +338,7 @@ Trạng thái `PENDING` có trong data model nhưng tính năng này không dùn
 | F-ACC-01.ST-07 | `ISSUED` | OTP đúng | `CONSUMED` | FR-09. Với challenge giao dịch, ghi `consumerRef` (FR-42) |
 | F-ACC-01.ST-08 | `ISSUED` | Đến thời điểm hết hạn | `EXPIRED` | FR-09 |
 | F-ACC-01.ST-09 | `ISSUED` | Nhập sai đủ `auth.otp.max_attempts` lần | `EXHAUSTED` | FR-11 |
-| F-ACC-01.ST-10 | `ISSUED` | Cấp challenge mới cùng mục đích và đối tượng; hoặc không giao được OTP (FR-14) | `SUPERSEDED` | FR-12. Data model chưa có trạng thái này, cần bổ sung khi chạy `data-model-design` |
+| F-ACC-01.ST-10 | `ISSUED` | Cấp challenge mới cùng mục đích và đối tượng; hoặc không giao được OTP (FR-14) | `SUPERSEDED` | FR-12. Data model có cột `superseded_at` và `uq_challenge_active` bảo vệ bất biến này |
 | F-ACC-01.ST-11 | `CONSUMED`, `EXPIRED`, `EXHAUSTED`, `SUPERSEDED` | bất kỳ | (bị cấm) | Ngoại lệ duy nhất: xác minh lại `CONSUMED` với cùng `consumerRef` (FR-42) vẫn thành công và không đổi trạng thái |
 
 **Refresh token**
@@ -397,31 +397,30 @@ Thiết kế chi tiết nằm ở `docs/ui/features/F-ACC-01-*` (chưa viết, c
 | Thiết bị / Đồng ý | UC-07 | |
 
 ### 4.2 API
-Hợp đồng chi tiết do skill `api-contract` viết. Bảng dưới gồm endpoint đã có trong api doc và endpoint **đề xuất** (chưa có trong api doc).
+Hợp đồng chi tiết (nguồn sự thật khi code): [identity/public.yaml](../../../source-code/contracts/openapi/identity/public.yaml), [identity/internal.yaml](../../../source-code/contracts/openapi/identity/internal.yaml), [notification/internal.yaml](../../../source-code/contracts/openapi/notification/internal.yaml), event [CustomerRegistered](../../../source-code/contracts/events/identity/CustomerRegistered/v1.json) và [CustomerUpdated](../../../source-code/contracts/events/identity/CustomerUpdated/v1.json). Bảng dưới chỉ tóm tắt các điểm có hành vi nghiệp vụ.
 
 | Method | Path | Idempotency | Auth | Request chính | Response / Mã lỗi |
 |---|---|---|---|---|---|
 | POST | `/auth/register` | Không (không phải lệnh tiền); xem FR-12 | Không | `{phone}` | `201 {challengeId, ...}`; 400, 429, 503 `OTP_SEND_FAILED` |
 | POST | `/auth/register/verify` | Không; xem FR-08 | Không | `{challengeId, otp, password, fullName, termsVersion, deviceFingerprint}` | `201` phiên; 400, 409 `PHONE_ALREADY_REGISTERED`, 422 `CHALLENGE_INVALID`/`CONSENT_REQUIRED` |
 | POST | `/auth/login` | Không | Không | `{phone, password, deviceFingerprint}` | `200` phiên; `422 CHALLENGE_REQUIRED` kèm `challengeId`; 401 `INVALID_CREDENTIALS`; 403 `ACCOUNT_TEMP_LOCKED`/`ACCOUNT_LOCKED`; 429 |
-| POST | `/auth/login/verify` | Không | Không | `{challengeId, otp}` | `200` phiên; 422 `CHALLENGE_INVALID` |
-| POST | `/auth/refresh` | Không | Cookie | | `200` phiên mới; 401 `UNAUTHENTICATED` |
+| POST | `/auth/login/verify` | Không | Không | `{challengeId, otp, deviceFingerprint}` | `200` phiên; 422 `CHALLENGE_INVALID` |
+| POST | `/auth/refresh` | Không | Không (BFF gửi refresh token lấy từ cookie) | `{refreshToken}` | `200` phiên mới; 401 `UNAUTHENTICATED` |
 | POST | `/auth/logout` | Không | Khách | | `204` |
-| POST | `/auth/password/forgot` *(đề xuất)* | Không | Không | `{phone}` | `201 {challengeId, ...}` luôn có hình dạng như nhau (FR-32) |
-| POST | `/auth/password/reset` *(đề xuất)* | Không | Không | `{challengeId, otp, newPassword}` | `204`; 400, 422 `CHALLENGE_INVALID` |
-| POST | `/me/password` *(đề xuất)* | Không | Khách | `{currentPassword, newPassword}` | `204`; 400, 401 `INVALID_CREDENTIALS` |
-| POST | `/me/phone` *(đề xuất)* | Không | Khách | `{newPhone, faceChallengeId, challengeId, otp}` | `204`; 403 `KYC_REQUIRED`, 409 `PHONE_ALREADY_REGISTERED`, 422 `CHALLENGE_INVALID` |
+| POST | `/auth/password/forgot` | Không | Không | `{phone}` | `201 {challengeId, ...}` luôn có hình dạng như nhau (FR-32) |
+| POST | `/auth/password/reset` | Không | Không | `{challengeId, otp, newPassword}` | `204`; 400, 422 `CHALLENGE_INVALID` |
+| POST | `/me/password` | Không | Khách | `{currentPassword, newPassword}` | `204`; 400, 401 `INVALID_CREDENTIALS` |
+| POST | `/me/phone` | Không | Khách | `{newPhone, faceChallengeId, otpChallengeId, otp}` | `204`; 403 `KYC_REQUIRED`, 409 `PHONE_ALREADY_REGISTERED`, 422 `CHALLENGE_INVALID` |
 | GET, DELETE | `/me/devices`, `/me/devices/{id}` | DELETE idempotent theo `id` | Khách | | 404 `NOT_FOUND` |
 | GET | `/me/consents` | — | Khách | | `200` |
-| POST | `/challenges` | Không | Khách | `{purpose, payload}` | `201 Challenge`; 400, 429; xem [identity/public.yaml](../../../source-code/contracts/openapi/identity/public.yaml) |
-| POST | `/internal/challenges/{id}/verify` | Theo `(id, consumerRef)` | Nội bộ | `{otp, payloadHash, consumerRef}` | `200` / `422 CHALLENGE_INVALID` |
+| POST | `/challenges` | Không | Khách | `{purpose, factor?, payload}` với `purpose` ∈ `P2P`, `CHANGE_PHONE` | `201 Challenge`; 400, 403 `KYC_REQUIRED`, 429, 503 |
+| POST | `/internal/challenges/{id}/verify` | Theo `(id, consumerRef)` | Nội bộ | `{otp?, payload, consumerRef}` | `200 {factor}` / `422 CHALLENGE_INVALID` |
 
-Chỗ lệch giữa SRS này và api doc/contract hiện có (việc cho `api-contract`):
-- `register/verify` chưa có `termsVersion`, `deviceFingerprint`.
-- Chưa có 4 endpoint đề xuất ở trên.
-- Các mã lỗi mới: `INVALID_CREDENTIALS`, `ACCOUNT_TEMP_LOCKED`, `ACCOUNT_LOCKED`, `PHONE_ALREADY_REGISTERED`, `CONSENT_REQUIRED`, `OTP_SEND_FAILED`; chưa có trong `common.yaml`.
-- Hình dạng của `CHALLENGE_REQUIRED` khi đăng nhập (dữ liệu challenge nằm trong `params`).
-- `purpose` của `POST /challenges` mới có `P2P`.
+Hợp đồng bổ sung những điểm SRS chưa nói, đều không thêm nghiệp vụ:
+- `AuthSession` có `accessTokenExpiresAt`, `refreshTokenExpiresAt` để BFF lên lịch làm mới và đặt hạn cookie (FR-27, FR-29).
+- `CONSENT_REQUIRED` mang `params.currentTermsVersion`; `ACCOUNT_TEMP_LOCKED` mang `params.retryAfterSeconds`; `CHALLENGE_REQUIRED` của đăng nhập mang dữ liệu challenge trong `params`.
+- Xác minh challenge nhận `payload` thay vì `payloadHash` (để `payment` không phải biết cách chuẩn hoá) và trả `factor` (OQ-049).
+- Chưa có hợp đồng: `GET /me` (OQ-048), thông báo bảo mật EV-04..EV-07 (OQ-051), nội dung điều khoản (OQ-050), rút lại đồng ý (OQ-041).
 
 ### 4.3 Hệ thống ngoài / provider
 | Hệ thống | Thao tác | Kết quả có thể | Xử lý từng kết quả |
@@ -462,7 +461,7 @@ Mã lỗi từ `INVALID_CREDENTIALS` đến `OTP_SEND_FAILED` là **mới**, c�
 | `RATE_LIMITED` | Vượt giới hạn tần suất, vượt trần gửi OTP, hoặc gửi lại trước `auth.otp.resend_after` | 429, `Retry-After` | "Bạn thao tác quá nhanh. Vui lòng thử lại sau {s} giây." | Có, sau `Retry-After` |
 | `UNAUTHENTICATED` | Thiếu, sai, đã thu hồi token; refresh token đã dùng/hết hạn | 401 | "Phiên đăng nhập không còn hiệu lực. Vui lòng đăng nhập lại." | Có, sau đăng nhập |
 | `TOKEN_EXPIRED` | Access token hết hạn | 401 | (client tự làm mới phiên, không hiện) | Có |
-| `FORBIDDEN` | Thiếu hoặc sai CSRF token | 403 | "Không thể thực hiện yêu cầu. Vui lòng tải lại trang." | Có, sau tải lại |
+| `FORBIDDEN` | Thiếu hoặc sai CSRF token (do BFF kiểm và trả, không phải `identity`) | 403 | "Không thể thực hiện yêu cầu. Vui lòng tải lại trang." | Có, sau tải lại |
 | `KYC_REQUIRED` | Đổi SĐT khi chưa có dữ liệu khuôn mặt | 403 | "Bạn cần hoàn tất xác thực danh tính (eKYC) trước khi đổi số điện thoại." | Không, tới khi eKYC xong |
 | `NOT_FOUND` | Thu hồi thiết bị không thuộc khách hoặc không tồn tại | 404 | "Không tìm thấy thiết bị." | Không |
 
@@ -606,7 +605,7 @@ Danh sách chung có ID `OQ-` ở [open-questions.md](../../open-questions.md).
 | Q7 | Giá trị tham số: `auth.otp.*`, `auth.login.max_failures`, `auth.login.lock_duration`, `auth.refresh.ttl`, `auth.session.idle_timeout`, ngưỡng rate limit, `auth.alert.otp_failure_ratio`. Câu hỏi riêng: khoá tạm theo tài khoản cho phép kẻ tấn công khoá tài khoản nạn nhân; có nên khoá theo cặp (tài khoản, thiết bị lạ) không? (OQ-036) | FR-13, FR-17, FR-27, FR-43, NFR-05 | Bảo mật / Product |
 | Q8 | Nhiều tab trình duyệt có thể làm mới cùng lúc bằng cùng refresh token, và tab chậm hơn bị coi là "dùng lại" làm mất cả phiên. Chọn: BFF làm mới tuần tự một lần, hay đặt `auth.refresh.reuse_grace` > 0? (OQ-037) | FR-26, AC-29 | Kiến trúc / Bảo mật |
 | Q9 | Họ tên tự khai lúc đăng ký (trước eKYC): có cần thu không? Tên này hiển thị ở đâu (tên người nhận P2P đã che, OQ-009), và có thể sai/mạo danh. (OQ-038) | FR-03, BR-03 | Product |
-| Q10 | `customer.phone` duy nhất kể cả `CLOSED`: SĐT của tài khoản đã đóng có được đăng ký lại không? Nếu có thì tài khoản cũ xử lý thế nào (ẩn danh SĐT)? Ảnh hưởng cả người nhận SĐT mới tái cấp cho người khác. (OQ-039) | BR-10, FR-06, F-ACC-03 | Product / Pháp chế |
+| Q10 | `customer.phone` duy nhất kể cả `CLOSED`: SĐT của tài khoản đã đóng có được đăng ký lại không? Nếu có thì tài khoản cũ xử lý thế nào (ẩn danh SĐT)? Ảnh hưởng cả người nhận SĐT mới tái cấp cho người khác. Mở rộng: SĐT cũ sau khi khách đổi SĐT có được người khác đăng ký ngay không (tiền chuyển theo SĐT sẽ tới chủ mới). (OQ-039) | BR-10, FR-06, F-ACC-03 | Product / Pháp chế |
 | Q11 | Kênh gửi cảnh báo bảo mật (thiết bị mới, đổi mật khẩu, đổi SĐT): SMS, thông báo trong ứng dụng, hay email (hiện không thu email)? (OQ-040) | EV-05..EV-07 | Product |
 | Q12 | `POST /me/consents` cho phép `granted = false`. Rút lại đồng ý `TERMS` hoặc `BIOMETRIC_PROCESSING` thì hệ quả gì (khoá tài khoản, xoá dữ liệu)? Spec này chỉ cho xem đồng ý. (OQ-041) | FR-40, F-CMP-01 | Pháp chế |
 | Q13 | Ví mở bất đồng bộ sau `CustomerRegistered`. Khách vừa đăng ký xong thấy gì trong lúc chưa có ví, và người khác chuyển tiền tới SĐT này trong khoảng đó nhận lỗi `RECIPIENT_NOT_FOUND`. Có chờ ví sẵn sàng trước khi trả kết quả đăng ký không? (OQ-042) | FR-03, FR-05, EV-01 | Kiến trúc / Product |
@@ -618,3 +617,5 @@ Danh sách chung có ID `OQ-` ở [open-questions.md](../../open-questions.md).
 | Phiên bản | Ngày | Thay đổi (ID) | Lý do |
 |---|---|---|---|
 | 0.1 | 2026-11-04 | Tạo mới: 8 use case, 43 FR, 10 BR, 15 ST, 9 EV, 7 NFR, 53 AC, 15 câu hỏi mở | Spec đầu tiên cho F-ACC-01 |
+| 0.2 | 2026-11-04 | ST-10: ghi chú data model đã có `superseded_at`. Q10 (OQ-039) mở rộng: SĐT cũ sau khi đổi SĐT có được đăng ký lại ngay không. Không đổi FR/BR/AC | Đối chiếu với data model `identity` (skill `data-model-design`) |
+| 0.3 | 2026-11-04 | 4.2: trỏ tới hợp đồng trong `contracts/`; `/auth/login/verify` thêm `deviceFingerprint`; `/me/phone` đổi `challengeId` thành `otpChallengeId`; `/challenges` thêm `factor?` và `purpose` `CHANGE_PHONE`; xác minh challenge nhận `payload` và trả `factor`; thay danh sách "chỗ lệch" bằng danh sách điểm hợp đồng bổ sung. §6: ghi `FORBIDDEN` do BFF. Không đổi FR/BR/AC | Viết hợp đồng API bằng skill `api-contract` |

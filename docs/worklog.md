@@ -4,6 +4,72 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-04 — Cập nhật tiến độ và commit
+
+- Thêm bảng "Tiến độ" vào `README.md`, cập nhật dòng trạng thái ở `README.md` và `CLAUDE.md` (trước đó vẫn ghi "chưa có code ứng dụng").
+- Commit và push gộp ba phần: SRS F-ACC-01 v0.3 (sửa), data model `identity`, hợp đồng API/event F-ACC-01.
+
+---
+
+## 2026-11-04 — Hợp đồng API & event cho F-ACC-01
+
+**Làm:**
+- `contracts/openapi/identity/public.yaml` v0.2: 13 endpoint mới (đăng ký, đăng nhập, xác minh đăng nhập thiết bị mới, làm mới phiên, đăng xuất, quên/đặt lại mật khẩu, đổi mật khẩu, đổi SĐT, thiết bị, đồng ý); `createChallenge` mở rộng (`factor` tuỳ chọn, thêm `CHANGE_PHONE`).
+- `contracts/openapi/identity/internal.yaml` (xác minh challenge giao dịch), `contracts/openapi/notification/internal.yaml` (gửi OTP), `contracts/events/identity/CustomerRegistered/v1.json`, `CustomerUpdated/v1.json`.
+- `common.yaml`: 6 mã lỗi mới (`INVALID_CREDENTIALS`, `ACCOUNT_TEMP_LOCKED`, `ACCOUNT_LOCKED`, `PHONE_ALREADY_REGISTERED`, `CONSENT_REQUIRED`, `OTP_SEND_FAILED`), `Problem503`, mô tả `params` mới.
+- `docs/design/2026-11-04-ewallet-api.md`: bảng Auth & identity viết lại, bảng mã lỗi, hai dòng API nội bộ, danh mục event. SRS F-ACC-01 lên v0.3 (mục 4.2 trỏ tới hợp đồng). `docs/open-questions.md`: OQ-047..051 (50 câu mở; P1 vẫn 6).
+
+**Đối chiếu (chỉ dựa trên SRS và các service tiêu thụ, vì chưa có đặc tả UI cho F-ACC-01):**
+- Nhu cầu dữ liệu, 17 dòng: ✅ 3, ➕ 10, ❓ 4.
+- Mã lỗi (SRS §6), 15 mã: ✅ 8, ➕ 6 mã mới, ➖ 1 (`FORBIDDEN` do CSRF là của BFF, không có endpoint `identity` nào trả).
+- Event, 9 dòng: ➕ 5, ❓ 2, ➖ 2 (audit và cảnh báo vận hành không thuộc hợp đồng này).
+
+**Kiểm chứng:**
+- Redocly lint: 5 file OpenAPI hợp lệ (payment, wallet, identity public và internal, notification internal). Lần đầu 2 file nội bộ thiếu `security`, đã sửa. Hai lỗi cố ý (example sai kiểu, bỏ response 4xx) đều bị lint bắt.
+- Ajv strict 2020-12: 4 schema event compile được, example hợp lệ, example thiếu trường bắt buộc bị từ chối; thêm 5 ca vi phạm của `CustomerRegistered` (SĐT chưa chuẩn hoá, 8 chữ số, `displayMasked` rỗng hoặc dài 65, `customerId` không phải UUID) đều bị từ chối, field lạ được chấp nhận.
+- oasdiff so với bản trước của `identity/public.yaml`: 19 "breaking", gồm 18 dòng cùng một thay đổi (6 mã `ErrorCode` mới × 3 response của `/challenges`) và 1 dòng `createChallenge` đổi thành `oneOf`.
+
+**Thay đổi phá tương thích:** không phá ở mức dữ liệu truyền. 18 dòng là thêm giá trị vào `ErrorCode`, đã khai báo "có thể mở rộng", quy ước cho phép. `oneOf` giữ request cũ `{purpose: P2P, payload}` hợp lệ, nhưng kiểu của client sinh tự động sẽ khác; chưa có client nào sinh từ v0.1 nên chấp nhận.
+
+**Quyết định / phát hiện:**
+- `verifyChallenge` nhận `payload` thay vì `payloadHash` (api doc cũ): để `payment` không phải biết cách chuẩn hoá để băm giống `identity`; trả thêm `factor`.
+- Lỗ hổng ở luồng tiền: không có gì chặn client nộp challenge OTP khi lệnh đòi `FACE` (OQ-049). Hợp đồng đã cho `payment` đủ dữ liệu để chặn, nhưng F-PAY-03 chưa nói.
+- `identity` phải tính `displayMasked` (tên đầy đủ không được lên Kafka) nên phụ thuộc quy tắc che tên chưa chốt (OQ-047, OQ-009).
+- `createChallenge` cho `CHANGE_PHONE` gửi OTP tới SĐT mới (FR-35), khác `P2P` luôn gửi tới SĐT đăng ký của khách (FR-41).
+- Thêm `notification/internal.yaml` dù không có trong yêu cầu ban đầu, vì `identity` không code được nếu thiếu hợp đồng gửi OTP.
+
+**Chưa kiểm / còn dở:**
+- Luồng khuôn mặt (nộp ảnh, xác thực) chưa có hợp đồng: thuộc F-ACC-02, OQ-028. `/me/phone` nhận `faceChallengeId` đã xác thực đạt mà chưa có cách để challenge đó đạt.
+- Chưa có hợp đồng: `GET /me` (OQ-048), `POST /me/consents` (OQ-041), thông báo bảo mật không phải OTP (OQ-051), nội dung điều khoản (OQ-050).
+- Chưa sinh client, chưa có contract test. Chưa có đặc tả UI của F-ACC-01.
+
+---
+
+## 2026-11-04 — Data model `identity` theo SRS F-ACC-01
+
+**Làm:**
+- Viết lại mục `identity` trong `docs/design/2026-11-04-ewallet-data-model.md` (dòng 440–821): ERD, 10 truy vấn chính, khối lượng, ghi chú thiết kế từng bảng, ẩn danh dữ liệu cá nhân.
+- Thay đổi chính: `customer` thêm `version`/`updated_at` (event cần `aggregateversion`) và kiểm chuẩn hoá SĐT, họ tên; `device.trusted` → `trusted_at`; `refresh_token` thêm hạn tuyệt đối của family; `otp_challenge` thêm `superseded_at`, 13 `CHECK` chặn tổ hợp vô nghĩa và `uq_challenge_active` (tối đa một challenge còn sống cho cùng đối tượng và nội dung lệnh, bảo vệ FR-12 ở DB); `consent` chỉ thêm (`REVOKE UPDATE, DELETE`).
+- Cập nhật SRS F-ACC-01 lên v0.2 (ghi chú ST-10, mở rộng OQ-039). `docs/open-questions.md`: thêm OQ-045, OQ-046 (45 câu mở; P1 vẫn 6).
+
+**Kiểm chứng:**
+- DDL tách từ chính tài liệu, chạy trên PostgreSQL 16 với `identity_svc` làm chủ bảng: tạo được 6 bảng, 4 index.
+- 75 ca đạt, 0 lỗi: 48 ca vi phạm bị chặn đúng loại lỗi và đúng tên ràng buộc/cột, 11 ca hợp lệ, 16 kiểm tra hành vi của các câu truy vấn nguyên tử (xoay vòng token, thu hồi family, lượt nhập OTP, claim `consumerRef`, bộ đếm khoá).
+- Lần chạy đầu 2 ca fail do lỗi bộ kiểm tra (Postgres trả chuỗi rỗng thay vì NULL cho tên ràng buộc ở lỗi `NOT NULL`), đã sửa bộ kiểm tra; DDL không đổi.
+- Bỏ thử `uq_challenge_active`: đúng 3 ca fail. Role ẩn danh `consent` (SELECT + UPDATE (ip, user_agent)) sửa được hai cột đó, bị từ chối khi sửa `granted` hoặc xoá.
+
+**Quyết định / phát hiện:**
+- Đếm số lần gửi OTP và `resendAfter` để ở Redis, không ở DB: nếu đếm theo hàng `otp_challenge` thì SĐT chưa đăng ký không có hàng, hành vi giới hạn tần suất khác nhau và dò được tài khoản (mâu thuẫn FR-02, FR-32). Đổi lại, Redis khởi động lại thì mất bộ đếm (OQ-046).
+- `code_hash` là HMAC có khoá và có `id` trong dữ liệu băm, vì mã chỉ có 10^6 giá trị; băm không khoá bị dò ngược ngay nếu lộ DB. Cụ thể hoá thêm so với design §10 ("hash").
+- Bỏ cột `email` (không FR nào dùng), `trusted_at` thay `trusted`: không phá tương thích vì chưa có dữ liệu thật.
+
+**Chưa kiểm / còn dở:**
+- Cách ẩn danh `customer.phone` chưa quyết (đụng `ck_customer_phone` và OQ-039).
+- Bảng đếm gửi OTP bền (OQ-046) và gắn challenge `CHANGE_PHONE` với SĐT mới (OQ-045) chưa quyết.
+- Chưa có Flyway migration; chỉ là thiết kế.
+
+---
+
 ## 2026-11-04 — SRS F-ACC-01 Đăng ký & đăng nhập (Draft v0.1)
 
 **Làm:**

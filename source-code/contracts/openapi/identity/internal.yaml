@@ -1,0 +1,87 @@
+openapi: 3.1.0
+info:
+  title: EWallet identity — API nội bộ
+  version: 0.1.0
+  description: |
+    Chỉ trong service mesh, **không bao giờ qua gateway**. Xác thực bằng mTLS; AuthorizationPolicy chỉ cho `payment` và
+    `bank-gateway` gọi. Nguồn: SRS F-ACC-01.FR-42, api doc §4.
+servers:
+  - url: /
+tags:
+  - name: challenges
+    description: Xác minh challenge của lệnh tiền
+paths:
+  /internal/challenges/{challengeId}/verify:
+    post:
+      operationId: verifyChallenge
+      tags: [challenges]
+      summary: Xác minh challenge xác thực tăng cường cho một lệnh
+      description: |
+        Idempotent theo `(challengeId, consumerRef)` (FR-42): challenge chỉ phục vụ **một** `consumerRef` (khoá idempotency
+        của lệnh). Xác minh lại với cùng `consumerRef` vẫn `200`, không cần OTP mới và kể cả khi challenge đã quá hạn trong
+        cửa sổ idempotency của lệnh. `consumerRef` khác, OTP sai, hết hạn, hết lượt, nội dung lệnh khác, hoặc challenge đã
+        bị thay: `422 CHALLENGE_INVALID`.
+        `payment` phải so `factor` trong phản hồi với `requiredFactor` của lệnh (chờ OQ-049).
+        `identity` hash `payload` đúng như lúc cấp challenge, nên `payment` không cần biết cách chuẩn hoá.
+        Mã lỗi: VALIDATION_ERROR (400), CHALLENGE_INVALID (422, `params.attemptsRemaining` khi OTP sai).
+      security: []   # xác thực bằng mTLS của mesh, không dùng JWT
+      parameters:
+        - name: challengeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyChallengeRequest'
+      responses:
+        '200':
+          description: Challenge hợp lệ cho lệnh này.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifiedChallenge'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+components:
+  schemas:
+    VerifyChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [payload, consumerRef]
+      properties:
+        otp:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Bắt buộc khi challenge có yếu tố OTP và đây là lần xác minh đầu. Vắng mặt với yếu tố FACE và khi xác minh lại cùng `consumerRef`. Không ghi log.
+        payload:
+          description: Nội dung lệnh, cùng dạng với `payload` lúc cấp challenge.
+          oneOf:
+            - $ref: 'public.yaml#/components/schemas/P2pChallengePayload'
+            - $ref: 'public.yaml#/components/schemas/ChangePhoneChallengePayload'
+        consumerRef:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Khoá idempotency của lệnh dùng challenge.
+      example:
+        otp: '123456'
+        payload:
+          recipientPhone: '0900000002'
+          amount: 3000000
+        consumerRef: 0193f2a4-7c1e-7b2a-9f00-000000000ab1
+    VerifiedChallenge:
+      type: object
+      required: [factor]
+      properties:
+        factor:
+          $ref: 'public.yaml#/components/schemas/ChallengeFactor'
+      example:
+        factor: OTP

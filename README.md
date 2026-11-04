@@ -4,7 +4,17 @@ Ví điện tử của một tổ chức trung gian thanh toán, liên kết v�
 
 **Giai đoạn 1:** khách hàng cá nhân (B2C) trên web và back-office (CMS). Tích hợp bên thứ 3 (ngân hàng, eKYC, thông báo, AML) chỉ có interface và bản fake.
 
-> **Trạng thái: giai đoạn tài liệu.** Chưa có code ứng dụng; `source-code/` mới chỉ có hợp đồng API và event. Mốc tiếp theo là M1 (nền tảng), xem [design §12.4](docs/design/2026-11-04-ewallet-design.md).
+> **Trạng thái: tài liệu đang đi trước, code mới ở mốc M1 (nền tảng).** `source-code/` có starter `platform`, hạ tầng chạy local và hợp đồng API/event; chưa có service nghiệp vụ nào. Tiến độ chi tiết ở [docs/worklog.md](docs/worklog.md); mốc theo [design §12.4](docs/design/2026-11-04-ewallet-design.md).
+
+### Tiến độ (cập nhật 2026-11-04)
+| Hạng mục | Tình trạng |
+|---|---|
+| Yêu cầu, kiến trúc (ADR-0001, 14 service), data model, API doc | Xong bản đầu (requirements v0.2, design v0.3) |
+| M1 nền tảng: `platform` core/web/messaging, docker compose | Xong, 20/20 test pass. Còn: security, observability, `api-gateway`, `identity`, frontend, Helm, CI |
+| F-PAY-03 Chuyển tiền ví–ví | SRS Draft v0.2, UI, 55 test case, hợp đồng API. Chưa duyệt |
+| F-ACC-01 Đăng ký & đăng nhập | SRS Draft v0.3, data model `identity`, hợp đồng API/event. Chưa có UI, test case. Chưa duyệt |
+| 22 tính năng còn lại | Chưa có SRS |
+| Câu hỏi mở | 50, trong đó 6 câu P1 chặn luồng tiền |
 
 ## Kiến trúc tóm tắt
 
@@ -26,7 +36,7 @@ Ví điện tử của một tổ chức trung gian thanh toán, liên kết v�
 | [docs/open-questions.md](docs/open-questions.md) | **Mọi câu hỏi mở** (`OQ-NNN`), người quyết định, việc bị chặn |
 | [source-code/contracts/](source-code/contracts/) | OpenAPI và JSON Schema event (nguồn sự thật khi code) |
 
-Tính năng đã đi hết quy trình tài liệu: **F-PAY-03 Chuyển tiền ví–ví** (SRS, UI, test case, hợp đồng API).
+Tính năng đã đi hết quy trình tài liệu: **F-PAY-03 Chuyển tiền ví–ví** (SRS, UI, test case, hợp đồng API). **F-ACC-01 Đăng ký & đăng nhập** đã có SRS, data model và hợp đồng; còn UI và test case.
 
 ## Quy trình làm việc
 
@@ -61,4 +71,4 @@ Thay đường dẫn bằng `openapi/wallet/public.yaml` hoặc `openapi/identit
 
 ## Việc đang chờ
 
-6 câu hỏi P1 chặn thiết kế, code hoặc test của luồng tiền: OQ-002, 003, 004, 006 (Pháp chế), OQ-024 (cơ chế ép lỗi khi test), OQ-027 (chuẩn hạ tầng công ty). Xem [docs/open-questions.md](docs/open-questions.md).
+50 câu hỏi mở, trong đó 6 câu P1 chặn thiết kế, code hoặc test của luồng tiền: OQ-002, 003, 004, 006 (Pháp chế), OQ-024 (cơ chế ép lỗi khi test), OQ-027 (chuẩn hạ tầng công ty). Các câu P2 chặn từng phần của F-ACC-01 (đăng nhập 2FA, nhận diện thiết bị, SĐT tài khoản đã đóng...) và F-PAY-03 (hạ cấp yếu tố xác thực, OQ-049). Xem [docs/open-questions.md](docs/open-questions.md).

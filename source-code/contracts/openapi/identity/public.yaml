@@ -1,25 +1,445 @@
 openapi: 3.1.0
 info:
-  title: EWallet identity — API khách hàng (challenge)
-  version: 0.1.0
-  description: Phần cấp challenge cho xác thực tăng cường, dùng ở F-PAY-03.S-03. Đi qua `api-gateway`, prefix `/api/v1`.
+  title: EWallet identity — API khách hàng
+  version: 0.2.0
+  description: |
+    Đăng ký, đăng nhập, phiên, mật khẩu, số điện thoại, thiết bị, đồng ý và challenge xác thực tăng cường.
+    Đi qua `api-gateway`, prefix `/api/v1`. Nguồn: SRS F-ACC-01 v0.2.
+
+    **Người gọi là BFF (`web`), không phải trình duyệt.** Token trong `AuthSession` do BFF giữ trong cookie httpOnly
+    (F-ACC-01.FR-29); không được chuyển cho trình duyệt dưới dạng body, URL hay `localStorage`. CSRF (FR-30) do BFF
+    kiểm ở biên trình duyệt ↔ BFF, nên không có endpoint nào ở đây trả `FORBIDDEN` vì CSRF.
+
+    **Không phải lệnh tiền:** không dùng `Idempotency-Key`. Gửi lại an toàn theo từng endpoint (xem mô tả).
+
+    **Phiên hiện tại:** access token mang claim `sid` = id của token family; endpoint cần biết "phiên hiện tại"
+    (`logout`, `changePassword`, `changePhone`, `listDevices`) đọc `sid` từ token.
 servers:
   - url: /api/v1
 security:
   - customerJwt: []
 tags:
+  - name: auth
+    description: Đăng ký, đăng nhập, làm mới phiên, quên mật khẩu (chưa có phiên)
+  - name: me
+    description: Dữ liệu và thao tác của người gọi
   - name: challenges
     description: Xác thực tăng cường
 paths:
+  /auth/register:
+    post:
+      operationId: startRegistration
+      tags: [auth]
+      summary: Bắt đầu đăng ký, gửi OTP tới số điện thoại
+      description: |
+        Chuẩn hoá SĐT (BR-01), tạo challenge `REGISTER`, gửi OTP (F-ACC-01.FR-01).
+        **SĐT đã có tài khoản vẫn nhận `201` cùng cấu trúc, không gửi OTP** (FR-02, chờ OQ-031); challenge trả về không
+        dùng được ở `completeRegistration`.
+        Gửi lại OTP: gọi lại endpoint này sau `resendAfter` (FR-12).
+        Mã lỗi: VALIDATION_ERROR (400), RATE_LIMITED (429), OTP_SEND_FAILED (503).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneRequest'
+      responses:
+        '201':
+          description: Challenge đã được cấp.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+        '503':
+          $ref: '../common.yaml#/components/responses/Problem503'
+  /auth/register/verify:
+    post:
+      operationId: completeRegistration
+      tags: [auth]
+      summary: Hoàn tất đăng ký bằng OTP, mật khẩu, họ tên và đồng ý điều khoản
+      description: |
+        Kiểm tra theo thứ tự BR-06: (1) định dạng, chính sách mật khẩu, họ tên, đồng ý điều khoản (không tiêu hao lượt
+        OTP, challenge giữ nguyên) → (2) challenge và OTP → (3) SĐT chưa có tài khoản.
+        Thành công: tạo tài khoản `ACTIVE` tier 0, ghi đồng ý và thiết bị, cấp phiên (FR-03..FR-07).
+        Gửi lại với challenge đã dùng → `CHALLENGE_INVALID`, không tạo thêm tài khoản (FR-08); khách đăng nhập bằng SĐT và
+        mật khẩu.
+        Không gửi `termsVersion`, hoặc khác phiên bản hiện hành → `CONSENT_REQUIRED` kèm `params.currentTermsVersion`.
+        Mã lỗi: VALIDATION_ERROR (400), PHONE_ALREADY_REGISTERED (409), CHALLENGE_INVALID (422, `params.attemptsRemaining`),
+        CONSENT_REQUIRED (422), RATE_LIMITED (429).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompleteRegistrationRequest'
+      responses:
+        '201':
+          description: Tài khoản đã được tạo; kèm phiên đăng nhập.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '409':
+          $ref: '../common.yaml#/components/responses/Problem409'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Đăng nhập bằng số điện thoại và mật khẩu
+      description: |
+        Thứ tự kiểm tra (BR-05): định dạng → giới hạn tần suất → đang khoá tạm → SĐT/mật khẩu → trạng thái tài khoản →
+        thiết bị mới.
+        - Sai SĐT hoặc sai mật khẩu hoặc tài khoản `CLOSED`: cùng `401 INVALID_CREDENTIALS` (FR-16, FR-18).
+        - Đang khoá tạm: `403 ACCOUNT_TEMP_LOCKED`, `params.retryAfterSeconds`; không kiểm mật khẩu (FR-17).
+        - Tài khoản `LOCKED` và mật khẩu đúng: `403 ACCOUNT_LOCKED`.
+        - **Thiết bị mới** và mật khẩu đúng: `422 CHALLENGE_REQUIRED`, dữ liệu challenge nằm trong `params`
+          (`challengeId`, `factor`, `expiresAt`, `destinationMasked`, `resendAfter`, `attemptsRemaining`); không cấp token
+          (FR-20). Hoàn tất bằng `verifyLogin`. Không gửi OTP khi mật khẩu sai.
+        Mã lỗi: VALIDATION_ERROR (400), INVALID_CREDENTIALS (401), ACCOUNT_TEMP_LOCKED, ACCOUNT_LOCKED (403),
+        CHALLENGE_REQUIRED (422), RATE_LIMITED (429), OTP_SEND_FAILED (503).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công từ thiết bị đã biết.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '403':
+          $ref: '../common.yaml#/components/responses/Problem403'
+        '422':
+          description: Thiết bị mới, cần OTP (`CHALLENGE_REQUIRED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '../common.yaml#/components/schemas/Problem'
+              example:
+                type: https://ewallet/errors/challenge-required
+                title: Challenge required
+                status: 422
+                code: CHALLENGE_REQUIRED
+                traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+                params:
+                  challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c3
+                  factor: OTP
+                  expiresAt: '2026-11-04T07:33:00Z'
+                  destinationMasked: '0900 *** 001'
+                  resendAfter: '2026-11-04T07:30:30Z'
+                  attemptsRemaining: 5
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+        '503':
+          $ref: '../common.yaml#/components/responses/Problem503'
+  /auth/login/verify:
+    post:
+      operationId: verifyLogin
+      tags: [auth]
+      summary: Hoàn tất đăng nhập từ thiết bị mới bằng OTP
+      description: |
+        OTP đúng: cấp phiên và ghi thiết bị là thiết bị đã biết (FR-21); cảnh báo thiết bị mới được gửi (FR-22).
+        Gửi lại OTP: gọi lại `login` sau `resendAfter` (FR-12).
+        Mã lỗi: VALIDATION_ERROR (400), CHALLENGE_INVALID (422, `params.attemptsRemaining`), RATE_LIMITED (429).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyLoginRequest'
+      responses:
+        '200':
+          description: Đăng nhập thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      tags: [auth]
+      summary: Làm mới phiên, xoay vòng refresh token
+      description: |
+        Mỗi refresh token chỉ dùng một lần (FR-25). Dùng lại token đã dùng: thu hồi cả token family và trả
+        `UNAUTHENTICATED` (FR-26, chờ OQ-037 về việc nhiều tab). Token hết hạn tuyệt đối hoặc quá thời gian không hoạt động:
+        `UNAUTHENTICATED` (FR-27). Tài khoản `LOCKED`/`CLOSED`: `UNAUTHENTICATED` (FR-31).
+        BFF đọc refresh token từ cookie của trình duyệt rồi gửi trong body.
+        Mã lỗi: UNAUTHENTICATED (401), RATE_LIMITED (429).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Cặp token mới.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Đăng xuất, thu hồi phiên hiện tại
+      description: |
+        Thu hồi token family của phiên hiện tại (claim `sid`); phiên của thiết bị khác không bị ảnh hưởng (FR-28).
+        Gọi lại khi phiên đã thu hồi vẫn trả `204` nếu access token còn hạn.
+        Mã lỗi: UNAUTHENTICATED, TOKEN_EXPIRED (401).
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '204':
+          description: Đã đăng xuất.
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+  /auth/password/forgot:
+    post:
+      operationId: startPasswordReset
+      tags: [auth]
+      summary: Quên mật khẩu, gửi OTP
+      description: |
+        **Luôn trả `201` cùng cấu trúc** dù SĐT có tài khoản hay không; chỉ tài khoản `ACTIVE` mới nhận OTP (FR-32,
+        chờ OQ-031). Giới hạn tần suất và `resendAfter` áp như nhau cho SĐT có và không có tài khoản.
+        Mã lỗi: VALIDATION_ERROR (400), RATE_LIMITED (429), OTP_SEND_FAILED (503).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneRequest'
+      responses:
+        '201':
+          description: Challenge đã được cấp (hoặc challenge giả không dùng được).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+        '503':
+          $ref: '../common.yaml#/components/responses/Problem503'
+  /auth/password/reset:
+    post:
+      operationId: completePasswordReset
+      tags: [auth]
+      summary: Đặt mật khẩu mới bằng OTP
+      description: |
+        Kiểm tra theo BR-06: định dạng và chính sách mật khẩu trước (không tiêu hao lượt OTP), rồi challenge và OTP.
+        Thành công: thu hồi mọi phiên, đặt bộ đếm sai về 0, gỡ khoá tạm, gửi thông báo (FR-33). Không cấp phiên; khách đăng nhập
+        lại. Chờ OQ-034 về việc có cần xác thực khuôn mặt.
+        Mã lỗi: VALIDATION_ERROR (400), CHALLENGE_INVALID (422, `params.attemptsRemaining`), RATE_LIMITED (429).
+      security: []
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletePasswordResetRequest'
+      responses:
+        '204':
+          description: Mật khẩu đã được đặt lại.
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /me/password:
+    post:
+      operationId: changePassword
+      tags: [me]
+      summary: Đổi mật khẩu khi đã đăng nhập
+      description: |
+        Cần mật khẩu hiện tại đúng (sai tính vào bộ đếm sai, FR-34); mật khẩu mới phải khác mật khẩu hiện tại.
+        Thành công: thu hồi mọi phiên khác, giữ phiên hiện tại; gửi thông báo.
+        **Mật khẩu hiện tại sai trả `401 INVALID_CREDENTIALS`**: BFF phải phân biệt với phiên hết hạn bằng `code`, không
+        bằng HTTP status.
+        Mã lỗi: VALIDATION_ERROR (400), INVALID_CREDENTIALS, UNAUTHENTICATED, TOKEN_EXPIRED (401), ACCOUNT_TEMP_LOCKED (403),
+        RATE_LIMITED (429).
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Mật khẩu đã đổi.
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '403':
+          $ref: '../common.yaml#/components/responses/Problem403'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /me/phone:
+    post:
+      operationId: changePhone
+      tags: [me]
+      summary: Đổi số điện thoại
+      description: |
+        Cần hai challenge theo thứ tự (FR-35): `faceChallengeId` là challenge `CHANGE_PHONE` yếu tố `FACE` đã xác thực đạt
+        (luồng khuôn mặt do F-ACC-02 thực hiện, chưa thiết kế: OQ-028), và `otpChallengeId` là challenge `CHANGE_PHONE`
+        yếu tố `OTP` gửi tới `newPhone` cùng `otp` khách nhập. Cả hai cấp qua `createChallenge`.
+        Thành công: thay SĐT, thu hồi mọi phiên khác, phát `CustomerUpdated`, thông báo cả SĐT cũ và mới (FR-36).
+        Gửi lại sau khi đã thành công trả `CHALLENGE_INVALID` (challenge đã dùng); khách kiểm tra SĐT hiện tại để biết kết quả.
+        Việc challenge có gắn với `newPhone` hay không: chờ OQ-045.
+        Mã lỗi: VALIDATION_ERROR (400), UNAUTHENTICATED, TOKEN_EXPIRED (401), KYC_REQUIRED (403, chưa có dữ liệu khuôn mặt,
+        FR-37), PHONE_ALREADY_REGISTERED (409), CHALLENGE_INVALID (422), RATE_LIMITED (429).
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePhoneRequest'
+      responses:
+        '204':
+          description: Đã đổi số điện thoại.
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '403':
+          $ref: '../common.yaml#/components/responses/Problem403'
+        '409':
+          $ref: '../common.yaml#/components/responses/Problem409'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+  /me/devices:
+    get:
+      operationId: listDevices
+      tags: [me]
+      summary: Danh sách thiết bị còn tin cậy của người gọi
+      description: |
+        Chỉ trả thiết bị của người gọi (FR-38). Không trả dấu vân tay thiết bị. Mỗi khách có vài thiết bị nên không phân
+        trang; thêm `limit`/`cursor` về sau là tương thích.
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Danh sách thiết bị.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceList'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+  /me/devices/{deviceId}:
+    delete:
+      operationId: revokeDevice
+      tags: [me]
+      summary: Thu hồi tin cậy một thiết bị
+      description: |
+        Bỏ tin cậy thiết bị và thu hồi các refresh token của nó; lần đăng nhập sau từ thiết bị đó phải qua OTP (FR-39).
+        Thiết bị không thuộc người gọi hoặc không tồn tại: `404 NOT_FOUND`, không phân biệt hai trường hợp.
+        Gọi lại với thiết bị đã thu hồi vẫn `204`.
+        Mã lỗi: UNAUTHENTICATED, TOKEN_EXPIRED (401), NOT_FOUND (404).
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '204':
+          description: Đã thu hồi.
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '404':
+          $ref: '../common.yaml#/components/responses/Problem404'
+  /me/consents:
+    get:
+      operationId: listConsents
+      tags: [me]
+      summary: Đồng ý hiện tại của người gọi theo từng mục đích
+      description: |
+        Mỗi mục đích một mục, lấy từ bản ghi đồng ý mới nhất (FR-40). Cập nhật hay rút lại đồng ý (`POST /me/consents`
+        trong api doc) chưa có hợp đồng, chờ OQ-041 và F-CMP-01.
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Danh sách đồng ý.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentList'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
   /challenges:
     post:
       operationId: createChallenge
       tags: [challenges]
-      summary: Cấp challenge xác thực tăng cường cho một nội dung lệnh
+      summary: Cấp challenge xác thực tăng cường cho một nội dung
       description: |
-        Server hash `payload`; challenge chỉ dùng được cho đúng nội dung đó (F-PAY-03.FR-17).
-        Gọi lại để gửi lại mã (sau `resendAfter`) → challenge mới.
-        Mã lỗi: VALIDATION_ERROR (400), RATE_LIMITED (429).
+        Server hash `payload`; challenge chỉ dùng được cho đúng nội dung đó (F-PAY-03.FR-17, F-ACC-01.FR-41).
+        - `P2P` + `OTP`: OTP gửi tới **SĐT đăng ký của người gọi**, không bao giờ tới SĐT do client chỉ định.
+        - `CHANGE_PHONE` + `OTP`: OTP gửi tới `payload.newPhone` (FR-35).
+        - `FACE`: chỉ cấp challenge; việc nộp ảnh và xác thực thuộc F-ACC-02 (OQ-028).
+        Cấp challenge mới cho cùng (mục đích, yếu tố, nội dung) thì challenge cũ bị vô hiệu (FR-12); gọi lại sau `resendAfter`
+        để gửi lại mã. Khác nội dung thì sống song song.
+        Mã lỗi: VALIDATION_ERROR (400), UNAUTHENTICATED, TOKEN_EXPIRED (401), KYC_REQUIRED (403, `CHANGE_PHONE` + `FACE`
+        khi chưa có dữ liệu khuôn mặt), RATE_LIMITED (429), OTP_SEND_FAILED (503).
       parameters:
         - $ref: '../common.yaml#/components/parameters/Traceparent'
       requestBody:
@@ -30,7 +450,7 @@ paths:
               $ref: '#/components/schemas/CreateChallengeRequest'
       responses:
         '201':
-          description: Challenge đã được cấp; mã đã được gửi (factor OTP).
+          description: Challenge đã được cấp; với yếu tố OTP, mã đã được gửi.
           content:
             application/json:
               schema:
@@ -39,19 +459,286 @@ paths:
           $ref: '../common.yaml#/components/responses/Problem400'
         '401':
           $ref: '../common.yaml#/components/responses/Problem401'
+        '403':
+          $ref: '../common.yaml#/components/responses/Problem403'
         '429':
           $ref: '../common.yaml#/components/responses/Problem429'
+        '503':
+          $ref: '../common.yaml#/components/responses/Problem503'
 components:
   schemas:
+    PhoneNumber:
+      type: string
+      pattern: '^(0[0-9]{9}|\+84[0-9]{9})$'
+      description: SĐT Việt Nam, dạng `0xxxxxxxxx` hoặc `+84xxxxxxxxx`. Server chuẩn hoá về E.164 (BR-01). Khoảng trắng và dấu chấm chưa được chấp nhận (OQ-016).
+      example: '0900000001'
+    Otp:
+      type: string
+      pattern: '^[0-9]{6}$'
+      description: Mã OTP 6 chữ số. Không ghi log.
+      example: '123456'
+    Password:
+      type: string
+      minLength: 1
+      writeOnly: true
+      format: password
+      description: Mật khẩu. Độ dài tối thiểu và tối đa theo `auth.password.*` (BR-02, OQ-035); sai chính sách trả VALIDATION_ERROR. Không ghi log.
+      example: matkhau-dai-va-kho-doan
+    DeviceFingerprint:
+      type: string
+      minLength: 1
+      maxLength: 256
+      description: Dấu vân tay thiết bị do client tạo. Server chỉ lưu HMAC của giá trị này (FR-23). Cách tạo chờ OQ-032.
+      example: fp-3f2a9c1e7b
+    PhoneRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          $ref: '#/components/schemas/PhoneNumber'
+      example:
+        phone: '0900000001'
+    CompleteRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, otp, password, fullName, deviceFingerprint]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        otp:
+          $ref: '#/components/schemas/Otp'
+        password:
+          $ref: '#/components/schemas/Password'
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Họ tên; server bỏ khoảng trắng thừa và từ chối ký tự điều khiển (BR-03). Có thu họ tên hay không chờ OQ-038.
+          example: Nguyễn Văn A
+        termsVersion:
+          type: string
+          maxLength: 16
+          description: Phiên bản điều khoản khách đã đồng ý. Vắng mặt hoặc khác phiên bản hiện hành thì CONSENT_REQUIRED (FR-04).
+          example: '2026-11'
+        deviceFingerprint:
+          $ref: '#/components/schemas/DeviceFingerprint'
+      example:
+        challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c1
+        otp: '123456'
+        password: matkhau-dai-va-kho-doan
+        fullName: Nguyễn Văn A
+        termsVersion: '2026-11'
+        deviceFingerprint: fp-3f2a9c1e7b
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, password, deviceFingerprint]
+      properties:
+        phone:
+          $ref: '#/components/schemas/PhoneNumber'
+        password:
+          $ref: '#/components/schemas/Password'
+        deviceFingerprint:
+          $ref: '#/components/schemas/DeviceFingerprint'
+      example:
+        phone: '0900000001'
+        password: matkhau-dai-va-kho-doan
+        deviceFingerprint: fp-3f2a9c1e7b
+    VerifyLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, otp, deviceFingerprint]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        otp:
+          $ref: '#/components/schemas/Otp'
+        deviceFingerprint:
+          $ref: '#/components/schemas/DeviceFingerprint'
+      example:
+        challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c3
+        otp: '123456'
+        deviceFingerprint: fp-8c4d1e0a22
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          writeOnly: true
+      example:
+        refreshToken: rt_Zk3vQ0m9bJ2xT7pL4nD8wH1sA6yE5uC0
+    CompletePasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [challengeId, otp, newPassword]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        otp:
+          $ref: '#/components/schemas/Otp'
+        newPassword:
+          $ref: '#/components/schemas/Password'
+      example:
+        challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c4
+        otp: '123456'
+        newPassword: mat-khau-moi-dai-hon
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          $ref: '#/components/schemas/Password'
+        newPassword:
+          $ref: '#/components/schemas/Password'
+      example:
+        currentPassword: matkhau-dai-va-kho-doan
+        newPassword: mat-khau-moi-dai-hon
+    ChangePhoneRequest:
+      type: object
+      additionalProperties: false
+      required: [newPhone, faceChallengeId, otpChallengeId, otp]
+      properties:
+        newPhone:
+          $ref: '#/components/schemas/PhoneNumber'
+        faceChallengeId:
+          type: string
+          format: uuid
+          description: Challenge `CHANGE_PHONE` yếu tố `FACE` đã xác thực đạt (F-ACC-02).
+        otpChallengeId:
+          type: string
+          format: uuid
+          description: Challenge `CHANGE_PHONE` yếu tố `OTP` đã gửi tới `newPhone`.
+        otp:
+          $ref: '#/components/schemas/Otp'
+      example:
+        newPhone: '0900000003'
+        faceChallengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c5
+        otpChallengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c6
+        otp: '123456'
+    AuthSession:
+      type: object
+      required: [accessToken, refreshToken, accessTokenExpiresAt, refreshTokenExpiresAt]
+      description: Phiên đăng nhập cho BFF. Không chứa dữ liệu của khách; lấy hồ sơ qua endpoint khác (OQ-048). Không ghi log.
+      properties:
+        accessToken:
+          type: string
+          description: JWT ký ES256, sống `auth.access.ttl` (5 phút). Mang claim `sid`.
+        refreshToken:
+          type: string
+          description: Dùng một lần (xoay vòng). BFF đặt vào cookie httpOnly.
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+          description: BFF dùng để lên lịch làm mới.
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+          description: Hạn của refresh token này, bằng thời điểm sớm hơn giữa hạn không hoạt động và hạn tuyệt đối (FR-27); BFF dùng làm hạn cookie.
+      example:
+        accessToken: eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMTkzZjJhNCIsInNpZCI6IjAxOTNmMmE1In0.c2lnbmF0dXJl
+        refreshToken: rt_Zk3vQ0m9bJ2xT7pL4nD8wH1sA6yE5uC0
+        accessTokenExpiresAt: '2026-11-04T07:35:00Z'
+        refreshTokenExpiresAt: '2026-11-04T08:00:00Z'
+    Device:
+      type: object
+      required: [deviceId, lastSeenAt, isCurrent]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+        label:
+          type: string
+          description: Nhãn thiết bị; vắng mặt nếu chưa đặt.
+        lastSeenAt:
+          type: string
+          format: date-time
+        isCurrent:
+          type: boolean
+          description: Thiết bị của phiên đang gọi (theo claim `sid`).
+      example:
+        deviceId: 0193f2a4-7c1e-7b2a-9f00-0000000000d1
+        label: Chrome trên Windows
+        lastSeenAt: '2026-11-04T07:30:00Z'
+        isCurrent: true
+    DeviceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+      example:
+        items:
+          - deviceId: 0193f2a4-7c1e-7b2a-9f00-0000000000d1
+            label: Chrome trên Windows
+            lastSeenAt: '2026-11-04T07:30:00Z'
+            isCurrent: true
+          - deviceId: 0193f2a4-7c1e-7b2a-9f00-0000000000d2
+            lastSeenAt: '2026-11-01T02:10:00Z'
+            isCurrent: false
+    Consent:
+      type: object
+      required: [purpose, termsVersion, granted, createdAt]
+      properties:
+        purpose:
+          type: string
+          description: Mục đích đồng ý. Có thể mở rộng; client hiển thị mặc định với giá trị chưa biết.
+          enum: [TERMS, BIOMETRIC_PROCESSING, MARKETING]
+        termsVersion:
+          type: string
+        granted:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      example:
+        purpose: TERMS
+        termsVersion: '2026-11'
+        granted: true
+        createdAt: '2026-11-04T07:30:00Z'
+    ConsentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Consent'
+      example:
+        items:
+          - purpose: TERMS
+            termsVersion: '2026-11'
+            granted: true
+            createdAt: '2026-11-04T07:30:00Z'
     CreateChallengeRequest:
+      description: Chọn theo `purpose`. Thêm `WITHDRAW` khi có SRS rút tiền.
+      oneOf:
+        - $ref: '#/components/schemas/CreateP2pChallengeRequest'
+        - $ref: '#/components/schemas/CreateChangePhoneChallengeRequest'
+      discriminator:
+        propertyName: purpose
+        mapping:
+          P2P: '#/components/schemas/CreateP2pChallengeRequest'
+          CHANGE_PHONE: '#/components/schemas/CreateChangePhoneChallengeRequest'
+    CreateP2pChallengeRequest:
       type: object
       additionalProperties: false
       required: [purpose, payload]
       properties:
         purpose:
           type: string
-          enum: [P2P]
-          description: Mục đích; sẽ thêm WITHDRAW, CHANGE_PHONE... theo các tính năng khác.
+          const: P2P
+        factor:
+          $ref: '#/components/schemas/ChallengeFactor'
         payload:
           $ref: '#/components/schemas/P2pChallengePayload'
       example:
@@ -59,34 +746,64 @@ components:
         payload:
           recipientPhone: '0900000002'
           amount: 3000000
+    CreateChangePhoneChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, payload]
+      properties:
+        purpose:
+          type: string
+          const: CHANGE_PHONE
+        factor:
+          $ref: '#/components/schemas/ChallengeFactor'
+        payload:
+          $ref: '#/components/schemas/ChangePhoneChallengePayload'
+      example:
+        purpose: CHANGE_PHONE
+        factor: OTP
+        payload:
+          newPhone: '0900000003'
+    ChallengeFactor:
+      type: string
+      enum: [OTP, FACE]
+      default: OTP
+      description: Yếu tố xác thực; mặc định OTP. Client dùng `requiredFactor` mà lệnh trả về khi xem trước. `FACE` chỉ hợp lệ với `P2P` và `CHANGE_PHONE`.
     P2pChallengePayload:
       type: object
       additionalProperties: false
       required: [recipientPhone, amount]
       properties:
         recipientPhone:
-          type: string
-          pattern: '^(0[0-9]{9}|\+84[0-9]{9})$'
+          $ref: '#/components/schemas/PhoneNumber'
         amount:
           type: integer
           format: int64
           minimum: 1
+    ChangePhoneChallengePayload:
+      type: object
+      additionalProperties: false
+      required: [newPhone]
+      properties:
+        newPhone:
+          $ref: '#/components/schemas/PhoneNumber'
     Challenge:
       type: object
       required: [challengeId, factor, expiresAt]
+      description: |
+        Dùng cho cả đăng ký, quên mật khẩu và xác thực tăng cường. `attemptsRemaining` sau mỗi lần nhập sai trả ở
+        `Problem.params.attemptsRemaining` của CHALLENGE_INVALID.
       properties:
         challengeId:
           type: string
           format: uuid
         factor:
-          type: string
-          enum: [OTP, FACE]
+          $ref: '#/components/schemas/ChallengeFactor'
         expiresAt:
           type: string
           format: date-time
         destinationMasked:
           type: string
-          description: Nơi nhận mã đã che (factor OTP). Đề xuất cho OQ-019.
+          description: Nơi nhận mã đã che (yếu tố OTP). Đề xuất cho OQ-019.
         resendAfter:
           type: string
           format: date-time
@@ -94,7 +811,7 @@ components:
         attemptsRemaining:
           type: integer
           minimum: 0
-          description: Số lần nhập còn lại. Sau mỗi lần sai, giá trị mới trả về trong `Problem.params.attemptsRemaining` của CHALLENGE_INVALID. Đề xuất cho OQ-019.
+          description: Số lần nhập còn lại. Đề xuất cho OQ-019.
       example:
         challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c1
         factor: OTP

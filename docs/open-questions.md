@@ -1,6 +1,6 @@
 # Câu hỏi mở — danh sách chung
 
-- Cập nhật: 2026-11-04 (thêm OQ-030..044 từ SRS F-ACC-01)
+- Cập nhật: 2026-11-04 (thêm OQ-030..044 từ SRS F-ACC-01, OQ-045..046 từ data model identity, OQ-047..051 từ hợp đồng api F-ACC-01)
 - Đây là **nơi duy nhất để xem mọi câu hỏi đang chờ quyết định**. Mỗi tài liệu vẫn giữ bảng câu hỏi của riêng nó (ID cục bộ như `Q4`, `UQ2`) để đọc trong ngữ cảnh. File này gom lại, gán ID chung `OQ-NNN`, ghi ai quyết định và câu hỏi đang chặn việc gì.
 
 **Cách dùng:**
@@ -27,6 +27,8 @@
 | OQ-033 | Khách chưa eKYC (không có ảnh mặt để so) đổi SĐT bằng cách nào? Spec đang chặn (`KYC_REQUIRED`) | SRS F-ACC-01 Q4 | F-ACC-01.FR-37; AC-44 | P2 |
 | OQ-034 | Quên mật khẩu chỉ cần OTP tới SĐT (rủi ro SIM swap): khách đã eKYC có phải xác thực khuôn mặt không | SRS F-ACC-01 Q5 | F-ACC-01.FR-33 | P3 |
 | OQ-041 | Rút lại đồng ý (`TERMS`, `BIOMETRIC_PROCESSING`) có hệ quả gì (khoá, xoá dữ liệu) ⚖️ | SRS F-ACC-01 Q12 | F-CMP-01; F-ACC-01.FR-40 | P3 |
+| OQ-045 | Challenge `CHANGE_PHONE` (cả `FACE` và `OTP`) có gắn `payload_hash` = băm SĐT mới không? SRS F-ACC-01.FR-35 chưa nói; không gắn thì khuôn mặt đã xác thực cho SĐT X dùng được cho SĐT Y. Schema cho phép cả hai | Data model DQ1 (identity) | F-ACC-01.FR-35; `otp_challenge.payload_hash` | P3 |
+| OQ-049 | **Hạ cấp yếu tố xác thực:** khi lệnh yêu cầu `requiredFactor = FACE`, client gửi challenge yếu tố `OTP` thì có bị từ chối không? F-PAY-03.FR-16 chỉ nói challenge "hợp lệ". Hợp đồng đã làm `identity` trả `factor` khi xác minh để `payment` so; việc so và quy tắc "FACE thay được OTP, OTP không thay được FACE" cần được ghi vào F-PAY-03 | Hợp đồng api F-ACC-01 | F-PAY-03.FR-16, BR-07; `payment` | P2 |
 
 ### Product
 | ID | Câu hỏi | Nguồn | Chặn | Ưu tiên |
@@ -45,9 +47,10 @@
 | OQ-035 | Chính sách mật khẩu: độ dài tối thiểu, quy tắc thành phần ký tự, danh sách mật khẩu bị cấm | SRS F-ACC-01 Q6 | F-ACC-01.BR-02; AC-39 | P3 |
 | OQ-036 | Giá trị tham số `auth.*` (OTP: hạn, số lần, gửi lại, trần gửi; khoá tạm; refresh TTL; idle timeout; rate limit; ngưỡng cảnh báo OTP lỗi) và phạm vi khoá tạm (theo tài khoản có thể bị lợi dụng để khoá nạn nhân) | SRS F-ACC-01 Q7 | F-ACC-01.FR-13, 17, 27, 43; NFR-05 (giá trị trước go-live) | P3 |
 | OQ-038 | Họ tên tự khai lúc đăng ký (trước eKYC): có thu không, hiển thị ở đâu | SRS F-ACC-01 Q9 | F-ACC-01.FR-03, BR-03 | P3 |
-| OQ-039 | SĐT của tài khoản `CLOSED` có được đăng ký lại không (`customer.phone` duy nhất kể cả `CLOSED`) | SRS F-ACC-01 Q10 | F-ACC-01.BR-10; F-ACC-03 | P2 |
+| OQ-039 | SĐT của tài khoản `CLOSED` có được đăng ký lại không (`customer.phone` duy nhất kể cả `CLOSED`)? Tương tự: SĐT cũ sau khi khách đổi SĐT có được người khác đăng ký ngay không (tiền chuyển theo SĐT sẽ tới chủ mới)? Cách ẩn danh `phone` cũng phụ thuộc câu này | SRS F-ACC-01 Q10; Data model (identity, ẩn danh) | F-ACC-01.BR-10, FR-36; F-ACC-03 | P2 |
 | OQ-040 | Kênh gửi cảnh báo bảo mật (thiết bị mới, đổi mật khẩu, đổi SĐT): SMS, trong ứng dụng, hay email | SRS F-ACC-01 Q11 | F-ACC-01.EV-05..07; F-NTF-01 | P3 |
 | OQ-044 | Chỉ hỗ trợ SĐT Việt Nam, không kiểm đầu số nhà mạng? (khoảng trắng trong SĐT: OQ-016) | SRS F-ACC-01 Q15 | F-ACC-01.BR-01; AC-02 | P3 |
+| OQ-050 | Điều khoản hiện hành (phiên bản và nội dung) lấy từ đâu: endpoint của `identity`, hay nội dung tĩnh trong `web` kèm phiên bản cấu hình? Hợp đồng chỉ cho client biết phiên bản đúng qua `CONSENT_REQUIRED.params.currentTermsVersion` | Hợp đồng api F-ACC-01 | F-ACC-01.FR-04; UI đăng ký | P2 |
 
 ### Thiết kế API
 *Nhóm này đều là chỗ API chưa khớp với SRS hoặc UI; xem đề xuất skill `api-contract`.*
@@ -58,6 +61,9 @@
 | OQ-021 | `GET /orders/{id}` cần trả `counterpartyDisplay` (UI kết quả hiển thị "Người nhận"). **Đề xuất (chờ duyệt):** thêm `order.counterpartyDisplay` (tên đã che hoặc tên ngân hàng), lấy từ `wallet_activity` | Data model DQ1 | UI S-04; TC-P2P-050 | P2 |
 | OQ-022 | Có đưa `p2p.amount.min` và `p2p.min_kyc_tier` cho FE (ví dụ qua `GET /wallet/limits`) để báo lỗi sớm không | UI F-PAY-03 UQ4 | UI S-01 | P3 |
 | OQ-023 | Người khác gọi `GET /orders/{id}` của lệnh không thuộc mình: trả 403 hay 404. **Đề xuất (chờ duyệt):** 404, không phân biệt với lệnh không tồn tại (không lộ lệnh có tồn tại); khớp UI S-04 và quy ước của skill `api-contract` | Test case F-PAY-03 TQ1 | TC-P2P-040 | P2 |
+| OQ-047 | `displayMasked` trong `CustomerRegistered`/`CustomerUpdated` do `identity` tính (tên đầy đủ không được lên Kafka), nên `identity` phải áp quy tắc che tên (OQ-009). Quy tắc nằm ở đâu để `wallet` và `identity` cùng dùng? Có cập nhật lại khi eKYC xác nhận tên thật (`KycTierChanged`) không? | Hợp đồng api F-ACC-01 | events `CustomerRegistered`, `CustomerUpdated`; F-PAY-03.FR-01 | P2 |
+| OQ-048 | `GET /me` (hồ sơ, KYC tier, trạng thái) có trong api doc nhưng F-ACC-01 chưa có FR nào: thuộc F-ACC-01 hay F-ACC-02, trả field nào | Hợp đồng api F-ACC-01 | `AuthSession` không mang dữ liệu khách; UI sau đăng nhập | P2 |
+| OQ-051 | Cách `identity` yêu cầu gửi thông báo bảo mật không phải OTP (đăng ký trùng SĐT, thiết bị mới, đổi mật khẩu, đổi SĐT): API nội bộ của `notification`, hay `notification` nghe event của `identity` (chưa có event cho các việc này)? | Hợp đồng api F-ACC-01 | F-ACC-01.EV-04..EV-07; F-NTF-01 | P2 |
 
 ### Thiết kế hệ thống / Vận hành / Hạ tầng
 | ID | Câu hỏi | Nguồn | Chặn | Ưu tiên |
@@ -70,6 +76,7 @@
 | OQ-037 | Nhiều tab làm mới cùng refresh token bị coi là "dùng lại" và mất phiên: BFF làm mới tuần tự hay đặt `auth.refresh.reuse_grace` > 0 | SRS F-ACC-01 Q8 | F-ACC-01.FR-26; AC-29 | P2 |
 | OQ-042 | Ví mở bất đồng bộ sau `CustomerRegistered`: khách thấy gì khi chưa có ví; có chờ ví sẵn sàng trước khi trả kết quả đăng ký không | SRS F-ACC-01 Q13 | F-ACC-01.FR-03, FR-05, EV-01; UI | P2 |
 | OQ-043 | `customer.status = PENDING` trong data model dùng cho việc gì (đăng ký hiện tạo thẳng `ACTIVE`) | SRS F-ACC-01 Q14 | F-ACC-01.ST-01..05 | P3 |
+| OQ-046 | Trần gửi OTP và `resendAfter` đặt ở Redis nên mất khi Redis khởi động lại (kẻ tấn công được thêm lượt gửi). Chấp nhận, hay lưu bền theo `(phone, purpose)` không phụ thuộc tài khoản tồn tại? | Data model DQ2 (identity) | F-ACC-01.FR-12, FR-13 | P3 |
 
 ### Thiết kế UI (tính năng khác)
 | ID | Câu hỏi | Nguồn | Chặn | Ưu tiên |
@@ -87,9 +94,9 @@
 ## Tóm tắt
 | Người quyết định | Số câu mở | Trong đó P1 |
 |---|---|---|
-| Pháp chế / Rủi ro | 12 | 4 (OQ-002, 003, 004, 006) |
-| Product | 17 | 0 |
-| Thiết kế API | 5 | 0 |
-| Thiết kế hệ thống / Vận hành / Hạ tầng | 8 | 2 (OQ-024, 027) |
+| Pháp chế / Rủi ro | 14 | 4 (OQ-002, 003, 004, 006) |
+| Product | 18 | 0 |
+| Thiết kế API | 8 | 0 |
+| Thiết kế hệ thống / Vận hành / Hạ tầng | 9 | 2 (OQ-024, 027) |
 | Thiết kế UI | 1 | 0 |
-| **Cộng** | **43** | **6** |
+| **Cộng** | **50** | **6** |

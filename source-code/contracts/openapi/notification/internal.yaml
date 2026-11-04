@@ -1,0 +1,79 @@
+openapi: 3.1.0
+info:
+  title: EWallet notification — API nội bộ
+  version: 0.1.0
+  description: |
+    Chỉ trong service mesh, **không bao giờ qua gateway**. Chỉ `identity` được gọi. Mới có phần gửi OTP, phục vụ F-ACC-01.
+    Cách gửi thông báo bảo mật không phải OTP (F-ACC-01.EV-04..EV-07) chưa quyết (OQ-051).
+servers:
+  - url: /
+tags:
+  - name: otp
+    description: Gửi OTP
+paths:
+  /internal/otp-messages:
+    post:
+      operationId: sendOtpMessage
+      tags: [otp]
+      summary: Gửi một OTP tới số điện thoại
+      description: |
+        Idempotent theo `idempotencyKey`: gọi lại cùng khoá không gửi tin thứ hai (F-ACC-01.EV-03).
+        `202` nghĩa là `notification` đã nhận để gửi, **không** đảm bảo tin đã tới tay khách; `identity` coi `202` là thành
+        công, còn lỗi hoặc quá thời gian chờ là `OTP_SEND_FAILED` (F-ACC-01.FR-14). Mã không được ghi log hay lưu dạng rõ.
+        Mã lỗi: VALIDATION_ERROR (400), OTP_SEND_FAILED (503, nhà cung cấp tin nhắn không nhận).
+      security: []   # xác thực bằng mTLS của mesh, không dùng JWT
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendOtpRequest'
+      responses:
+        '202':
+          description: Đã nhận để gửi.
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '503':
+          $ref: '../common.yaml#/components/responses/Problem503'
+components:
+  schemas:
+    SendOtpRequest:
+      type: object
+      additionalProperties: false
+      required: [idempotencyKey, channel, recipient, code, purpose, expiresAt]
+      properties:
+        idempotencyKey:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Dùng id của challenge.
+        channel:
+          type: string
+          enum: [SMS]
+          description: Có thể mở rộng khi thêm kênh.
+        recipient:
+          type: string
+          pattern: '^\+84[0-9]{9}$'
+          description: SĐT đã chuẩn hoá E.164.
+        code:
+          type: string
+          pattern: '^[0-9]{6}$'
+          writeOnly: true
+          description: Mã OTP. Không ghi log.
+        purpose:
+          type: string
+          enum: [REGISTER, LOGIN_NEW_DEVICE, RESET_PASSWORD, CHANGE_PHONE, P2P, WITHDRAW]
+          description: Mục đích, để dựng nội dung tin (EV-03). Có thể mở rộng.
+        expiresAt:
+          type: string
+          format: date-time
+          description: Thời điểm mã hết hạn, để ghi thời hạn trong tin.
+      example:
+        idempotencyKey: 0193f2a4-7c1e-7b2a-9f00-0000000000c1
+        channel: SMS
+        recipient: '+84900000001'
+        code: '123456'
+        purpose: REGISTER
+        expiresAt: '2026-11-04T07:33:00Z'

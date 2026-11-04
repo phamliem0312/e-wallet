@@ -437,72 +437,385 @@ Công thức phí: `fee = clamp(fixed + ceil(amount × bp / 10000), min, max)`. 
 
 ---
 
-## identity
+## identity (`identity_db`)
+
+Nguồn: SRS [F-ACC-01](../srs/features/F-ACC-01-dang-ky-dang-nhap.md) (Draft v0.1), design §5 và §10. Mục này được viết lại ngày 2026-11-04; so sánh với bản trước ở "Lịch sử thay đổi" cuối tài liệu.
+
+### ERD
+```mermaid
+erDiagram
+  CUSTOMER ||--o| CREDENTIAL : "mật khẩu, 1-1"
+  CUSTOMER ||--o{ DEVICE : "thiết bị đã biết"
+  CUSTOMER ||--o{ REFRESH_TOKEN : "phiên"
+  DEVICE ||--o{ REFRESH_TOKEN : "cấp cho thiết bị"
+  CUSTOMER |o--o{ OTP_CHALLENGE : "null khi REGISTER"
+  CUSTOMER ||--o{ CONSENT : "chỉ thêm"
+  CUSTOMER {
+    uuid id PK
+    varchar phone "E.164, unique kể cả CLOSED"
+    varchar status
+    smallint kyc_tier "bản sao từ kyc, mặc định 0"
+    bigint version "aggregateversion của event"
+  }
+  OTP_CHALLENGE {
+    uuid id PK
+    varchar purpose
+    varchar factor "OTP | FACE"
+    timestamptz consumed_at
+    timestamptz superseded_at
+  }
+  REFRESH_TOKEN {
+    uuid family_id
+    bytea token_hash "unique"
+    timestamptz used_at
+    timestamptz revoked_at
+  }
+```
+
+### Truy vấn chính
+| # | Truy vấn | Ai / khi nào | Tần suất (giả định) | Index |
+|---|---|---|---|---|
+| Q1 | Tra khách và credential theo SĐT | `POST /auth/login`, quên mật khẩu, kiểm SĐT đã đăng ký | ~50/giây lúc cao điểm (F-ACC-01.NFR-01) | `uq_customer_phone`, PK `credential` |
+| Q2 | Tăng bộ đếm sai nguyên tử, khoá khi đạt ngưỡng; đặt lại về 0 | Đăng nhập sai/đúng, đổi/đặt lại mật khẩu | Thấp | PK `credential` |
+| Q3 | Tìm thiết bị theo `(customer_id, fingerprint_hash)` | Đăng nhập | Như Q1 | `uq_device_fingerprint` |
+| Q4 | Liệt kê thiết bị còn tin cậy của một khách | `GET /me/devices` | Rất thấp | `uq_device_fingerprint` (tiền tố `customer_id`; mỗi khách vài dòng) |
+| Q5 | Tra refresh token theo hash; xoay vòng bằng `UPDATE ... WHERE used_at IS NULL AND revoked_at IS NULL` rồi thêm token mới | `POST /auth/refresh` | ~100/giây (150k khách hoạt động/ngày, làm mới mỗi 5 phút khi đang dùng) | `uq_refresh_token_hash` |
+| Q6 | Thu hồi theo family, theo thiết bị, hoặc toàn bộ phiên của khách | Dùng lại token, đăng xuất, thu hồi thiết bị, đổi/đặt lại mật khẩu, khoá tài khoản | Thấp | `ix_refresh_token_customer_active` |
+| Q7 | Xác minh challenge: lấy theo `id`, tăng `attempts` nguyên tử, đánh dấu đã dùng | Nhập OTP | ~10/giây | PK |
+| Q8 | Vô hiệu challenge còn sống cùng đối tượng rồi cấp challenge mới | Gửi OTP, gửi lại | ~10/giây | `uq_challenge_active` |
+| Q9 | Đồng ý mới nhất của mỗi mục đích | `GET /me/consents` | Rất thấp | `ix_consent_customer` |
+| Q10 | Dọn refresh token hết hạn quá 1 ngày; challenge cũ hơn 7 ngày | Job hằng ngày | 1 lần/ngày | Quét bảng (bảng nhỏ, xem khối lượng) |
+
+### Khối lượng & lưu trữ
+Giả định: 500k khách (NFR-P-01); 30% hoạt động mỗi ngày (~150k), mỗi người dùng khoảng 1 giờ/ngày nên làm mới phiên khoảng 12 lần/ngày; khoảng 100k OTP/ngày (đăng nhập thiết bị mới, lệnh cần xác thực, đăng ký).
+
+| Bảng | Dòng/ngày | Quy mô ổn định | Lưu nóng | Archive / ẩn danh | Partition |
+|---|---|---|---|---|---|
+| `customer`, `credential` | Vài nghìn (đăng ký mới) | 500k dòng | Vô thời hạn khi còn tài khoản | Ẩn danh khi hết hạn lưu trữ (bên dưới) | Không |
+| `device` | Vài nghìn | ~750k dòng | Như `customer` | Xoá khi ẩn danh khách | Không |
+| `refresh_token` | ~1,8 triệu | ~2–4 triệu dòng (1 ngày sau hết hạn rồi xoá theo lô) | 1 ngày sau `expires_at` | Xoá, không export | Không. Xem lại nếu autovacuum không theo kịp lượng xoá: khi đó partition theo ngày |
+| `otp_challenge` | ~100k | ~700k dòng | 7 ngày (challenge giao dịch phải còn để xác minh lại với cùng `consumerRef` trong 24 giờ của `Idempotency-Key`) | Xoá | Không |
+| `consent` | Vài nghìn | ~1 triệu dòng | Theo nghĩa vụ chứng minh đã đồng ý `[Cần xác nhận ⚖️]` | Ẩn danh `ip`, `user_agent` khi hết hạn lưu trữ | Không |
+
+### `identity.customer`
+**Mục đích:** tài khoản của khách, khoá bởi SĐT. Loại: aggregate. **Chủ sở hữu:** `identity`. **Ai dùng qua event:** `wallet` (danh bạ tra cứu người nhận), `audit`. `kyc_tier` là bản sao từ `kyc.events` (ghi bởi consumer của F-ACC-02).
 
 ```sql
 create schema identity;
-create table identity.customer (
-  id          uuid primary key,
-  phone       varchar(15) not null unique,     -- E.164
-  email       varchar(254),
-  full_name   varchar(128),
-  status      varchar(16) not null check (status in ('PENDING','ACTIVE','LOCKED','CLOSED')),
-  kyc_tier    smallint not null default 0,
-  created_at  timestamptz not null default now()
-);
-create table identity.credential (
-  customer_id    uuid primary key references identity.customer(id),
-  password_hash  varchar(255) not null,        -- Argon2id
-  failed_count   int not null default 0,
-  locked_until   timestamptz,
-  changed_at     timestamptz not null
-);
-create table identity.device (
-  id            uuid primary key,
-  customer_id   uuid not null references identity.customer(id),
-  fingerprint_hash bytea not null,
-  label         varchar(64),
-  trusted       boolean not null default false,
-  last_seen_at  timestamptz,
-  unique (customer_id, fingerprint_hash)
-);
-create table identity.refresh_token (
-  id          uuid primary key,
-  customer_id uuid not null,
-  device_id   uuid not null,
-  family_id   uuid not null,
-  token_hash  bytea not null unique,
-  expires_at  timestamptz not null,
-  used_at     timestamptz,
-  revoked_at  timestamptz
-);
-create table identity.otp_challenge (
-  id           uuid primary key,
-  customer_id  uuid,                -- null khi đăng ký
-  phone        varchar(15),
-  purpose      varchar(32) not null, -- REGISTER, LOGIN_NEW_DEVICE, P2P, WITHDRAW, CHANGE_PHONE...
-  payload_hash bytea,               -- gắn challenge với đúng nội dung lệnh
-  code_hash    bytea not null,
-  attempts     smallint not null default 0,
-  expires_at   timestamptz not null,
-  factor       varchar(8) not null default 'OTP',  -- OTP | FACE
-  consumed_at  timestamptz,
-  consumer_ref varchar(64)   -- idempotency key của lệnh đã dùng challenge; verify lại với cùng ref → OK
-);
 
-create table identity.consent (
-  id            uuid primary key,
-  customer_id   uuid not null,
-  purpose       varchar(32) not null,   -- TERMS, BIOMETRIC_PROCESSING, MARKETING...
-  terms_version varchar(16) not null,
-  granted       boolean not null,
-  ip            inet,
-  user_agent    varchar(256),
-  created_at    timestamptz not null default now()
+create table identity.customer (
+  id          uuid primary key,                          -- UUIDv7
+  phone       varchar(15) not null,                      -- E.164 đã chuẩn hoá (F-ACC-01.BR-01)
+  full_name   varchar(128) not null,                     -- đã chuẩn hoá (BR-03)
+  status      varchar(16) not null,
+  kyc_tier    smallint not null default 0,               -- 0 = chưa eKYC (FR-03)
+  version     bigint not null default 1,                 -- = aggregateversion của CustomerRegistered / CustomerUpdated
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  constraint uq_customer_phone      unique (phone),     -- BR-10: một SĐT một tài khoản, kể cả CLOSED
+  constraint ck_customer_phone      check (phone ~ '^\+84[0-9]{9}$'),
+  constraint ck_customer_status     check (status in ('PENDING','ACTIVE','LOCKED','CLOSED')),
+  constraint ck_customer_tier       check (kyc_tier >= 0),
+  constraint ck_customer_version    check (version >= 1),
+  constraint ck_customer_full_name  check (char_length(full_name) >= 1
+                                           and full_name = btrim(full_name)
+                                           and full_name !~ '\s{2,}'
+                                           and full_name !~ '[[:cntrl:]]')
 );
-create index ix_consent_customer on identity.consent (customer_id, purpose, created_at desc);
--- Chỉ INSERT; trạng thái hiện tại = dòng mới nhất theo (customer_id, purpose).
 ```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| `uq_customer_phone` | Hai yêu cầu đăng ký đồng thời cùng SĐT chỉ một bên thắng | F-ACC-01.FR-06, BR-10 |
+| `ck_customer_phone` chỉ nhận `+84` và 9 chữ số | SĐT đã chuẩn hoá trước khi vào DB; chỉ SĐT Việt Nam | BR-01 `[Cần xác nhận Q15 / OQ-044]` |
+| `full_name` `NOT NULL` kèm kiểm chuẩn hoá | SRS bắt buộc họ tên khi đăng ký | FR-03, BR-03 `[Cần xác nhận OQ-038]` |
+| Thêm `version`, `updated_at` | Event cần `aggregateversion`; mỗi lần đổi trạng thái/SĐT tăng `version` bằng `UPDATE ... WHERE id = ? AND version = ?` | EV-01, EV-02 |
+| `status` giữ `PENDING` | Chưa rõ dùng cho việc gì, bỏ khi OQ-043 trả lời | OQ-043 |
+| Bỏ cột `email` | Không có FR nào dùng, requirements không thu email. Thêm lại nếu OQ-040 chọn kênh email | F-ACC-01 Q11 |
+| Không có `closed_at`, `locked_at` | Thuộc F-ACC-03 và F-BO-02; audit đã ghi thời điểm | — |
+
+**Chuyển trạng thái** (F-ACC-01.ST-01..05; chuyển do tính năng khác kích hoạt):
+```pgsql
+-- khoá/mở khoá/đóng: UPDATE có điều kiện trạng thái hiện tại
+update identity.customer set status = 'LOCKED', version = version + 1, updated_at = now()
+ where id = :id and status = 'ACTIVE';           -- 0 dòng = trạng thái đã khác, không làm gì
+```
+
+**Dữ liệu cá nhân:** `phone`, `full_name` ở dạng rõ vì cần tra cứu và hiển thị (nằm trong DB riêng của `identity`, user riêng). Trả cho client dạng đã che trừ chính chủ. Ẩn danh: bên dưới.
+
+**Truy vết:** FR-03, FR-06, FR-36, BR-01, BR-03, BR-10, ST-01..05, EV-01, EV-02.
+
+### `identity.credential`
+**Mục đích:** mật khẩu và bộ đếm đăng nhập sai của một khách. Loại: aggregate (1-1 với `customer`).
+
+```sql
+create table identity.credential (
+  customer_id    uuid primary key,
+  password_hash  varchar(255) not null,                  -- Argon2id (NFR-02)
+  failed_count   int not null default 0,                 -- BR-07
+  locked_until   timestamptz,                            -- null = không bị khoá tạm
+  changed_at     timestamptz not null default now(),
+  constraint fk_credential_customer foreign key (customer_id) references identity.customer (id),
+  constraint ck_credential_algo     check (password_hash like '$argon2id$%'),
+  constraint ck_credential_failed   check (failed_count >= 0)
+);
+```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| `ck_credential_algo` | Chặn ghi băm bằng thuật toán khác (bcrypt, SHA) do lỗi cấu hình | NFR-02 |
+| Bộ đếm cộng nguyên tử bằng `UPDATE`, không đọc-rồi-ghi | Nhiều lần thử đồng thời không lọt qua ngưỡng | FR-17, BR-07 |
+| `locked_until` là khoá tạm; `customer.status = LOCKED` là khoá do nhân viên | Hai cơ chế khác nhau: hết giờ tự mở / phải có người mở | FR-17, FR-18 |
+
+```pgsql
+-- Sai mật khẩu (chỉ khi không đang khoá; trong thời gian khoá không tăng — FR-17)
+update identity.credential
+   set failed_count = failed_count + 1,
+       locked_until = case when failed_count + 1 >= :max_failures then now() + :lock_duration else locked_until end
+ where customer_id = :id and (locked_until is null or locked_until <= now());
+-- Đúng mật khẩu, đặt lại mật khẩu, hết thời gian khoá:
+update identity.credential set failed_count = 0, locked_until = null where customer_id = :id;
+```
+Khi khoá hết hạn, bước đặt lại về 0 phải chạy trước lần cộng kế tiếp (ứng dụng gọi câu thứ hai khi thấy `locked_until <= now()`).
+
+**Dữ liệu cá nhân:** `password_hash` không bao giờ ra khỏi `identity`; không log.
+
+**Truy vết:** FR-15..FR-18, FR-33, FR-34, BR-07, NFR-02.
+
+### `identity.device`
+**Mục đích:** thiết bị mà khách đã chứng minh sở hữu (qua OTP hoặc đăng ký). Loại: aggregate nhỏ.
+
+```sql
+create table identity.device (
+  id                uuid primary key,
+  customer_id       uuid not null,
+  fingerprint_hash  bytea not null,                      -- HMAC-SHA256 của dấu vân tay; không lưu bản gốc (FR-23)
+  label             varchar(64),                         -- null = chưa đặt nhãn
+  trusted_at        timestamptz,                         -- null = đã bị thu hồi tin cậy (FR-39)
+  last_seen_at      timestamptz not null default now(),
+  created_at        timestamptz not null default now(),
+  constraint fk_device_customer     foreign key (customer_id) references identity.customer (id),
+  constraint uq_device_fingerprint  unique (customer_id, fingerprint_hash),
+  constraint ck_device_fingerprint  check (octet_length(fingerprint_hash) = 32)
+);
+```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| `trusted_at` thay cho `trusted boolean` | Cần thời điểm để áp `auth.device.trust_ttl`; thu hồi = đặt null, giữ dòng để `refresh_token.device_id` còn tham chiếu và để audit | BR-04, FR-39 |
+| Thiết bị mới đăng nhập OTP xong mới có dòng | Chưa qua OTP thì chưa tin cậy, không ghi | FR-21 |
+| Đăng nhập lại từ thiết bị đã thu hồi | `UPDATE ... SET trusted_at = now(), last_seen_at = now()` trên dòng cũ, không tạo dòng mới | FR-39 |
+| Thiết bị là "mới" khi không có dòng, hoặc `trusted_at is null`, hoặc `trusted_at + trust_ttl < now()` | | BR-04 |
+
+**Dữ liệu cá nhân:** dấu vân tay chỉ ở dạng HMAC (khoá HMAC từ KMS); `label` do hệ thống đặt từ user agent hoặc khách tự đặt.
+
+**Truy vết:** FR-19..FR-23, FR-38, FR-39, BR-04, NFR-07.
+
+### `identity.refresh_token`
+**Mục đích:** các refresh token đã cấp, theo từng chuỗi (family) xoay vòng. Loại: bản ghi sống ngắn.
+
+```sql
+create table identity.refresh_token (
+  id                 uuid primary key,
+  customer_id        uuid not null,
+  device_id          uuid not null,
+  family_id          uuid not null,                      -- chung cho mọi token xoay vòng từ một lần đăng nhập
+  token_hash         bytea not null,                     -- SHA-256 của token (token ngẫu nhiên 256 bit)
+  created_at         timestamptz not null default now(),
+  expires_at         timestamptz not null,               -- = least(created_at + idle_timeout, family_expires_at)
+  family_expires_at  timestamptz not null,               -- hạn tuyệt đối tính từ lúc đăng nhập (auth.refresh.ttl)
+  used_at            timestamptz,                        -- null = chưa dùng để làm mới (ST-13)
+  revoked_at         timestamptz,                        -- null = chưa thu hồi (ST-14)
+  constraint fk_refresh_token_customer  foreign key (customer_id) references identity.customer (id),
+  constraint fk_refresh_token_device    foreign key (device_id) references identity.device (id),
+  constraint uq_refresh_token_hash      unique (token_hash),
+  constraint ck_refresh_token_hash      check (octet_length(token_hash) = 32),
+  constraint ck_refresh_token_expiry    check (expires_at > created_at and expires_at <= family_expires_at),
+  constraint ck_refresh_token_used      check (used_at is null or used_at >= created_at)
+);
+create index ix_refresh_token_customer_active on identity.refresh_token (customer_id)
+  where revoked_at is null;                                -- Q6
+```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| Hai cột hạn: `expires_at` và `family_expires_at` | Khi xoay vòng, token mới có `expires_at = least(now() + idle_timeout, family_expires_at)`: một cột kiểm cả hạn không hoạt động lẫn hạn tuyệt đối | FR-27 |
+| Giữ token đã `USED` đến khi hết hạn | Để nhận ra việc dùng lại token cũ và thu hồi cả family | FR-26 |
+| Chỉ một index ngoài khoá | Thu hồi theo family hoặc thiết bị đều lọc thêm trên danh sách token chưa thu hồi của khách (vài chục dòng); không cần index riêng cho `family_id`, `device_id` | Q6 |
+| Không lưu IP/user agent | Không có FR; audit đã ghi | — |
+
+**Chuyển trạng thái** (ST-12..ST-15; token không có cột trạng thái, suy từ `used_at`, `revoked_at`, `expires_at`):
+```pgsql
+-- Làm mới: chỉ một yêu cầu thắng (FR-25). 0 dòng = token đã dùng/thu hồi → áp FR-26
+update identity.refresh_token set used_at = now()
+ where token_hash = :hash and used_at is null and revoked_at is null and expires_at > now()
+returning id, customer_id, device_id, family_id, family_expires_at;
+-- Dùng lại token đã dùng: thu hồi cả family
+update identity.refresh_token set revoked_at = now()
+ where customer_id = :customer and family_id = :family and revoked_at is null;
+```
+Cả hai câu chạy cùng transaction với việc thêm token mới (để không có khoảng hở mất token).
+
+**Dữ liệu cá nhân:** không. Token gốc chỉ ở cookie; DB chỉ có hash.
+
+**Truy vết:** FR-24..FR-28, FR-31, FR-33, FR-34, FR-36, FR-39, ST-12..ST-15.
+
+### `identity.otp_challenge`
+**Mục đích:** yêu cầu xác thực (OTP hoặc khuôn mặt) gắn với một mục đích và một đối tượng. Loại: bản ghi sống ngắn. Dùng cho đăng ký, đăng nhập thiết bị mới, quên mật khẩu, đổi SĐT, và xác thực tăng cường của lệnh tiền. Tên bảng giữ `otp_challenge` dù có `factor = FACE` để không đổi tên.
+
+```sql
+create table identity.otp_challenge (
+  id             uuid primary key,
+  customer_id    uuid,                                   -- chủ challenge; null chỉ khi purpose = REGISTER
+  phone          varchar(15),                            -- nơi nhận OTP (E.164); null khi factor = FACE
+  purpose        varchar(32) not null,
+  factor         varchar(8) not null default 'OTP',
+  payload_hash   bytea,                                  -- gắn challenge với đúng nội dung lệnh (F-ACC-01.FR-41)
+  code_hash      bytea,                                  -- HMAC-SHA256(khoá KMS, id || mã); null khi FACE
+  attempts       smallint not null default 0,            -- số lần nhập sai (FR-11)
+  created_at     timestamptz not null default now(),
+  expires_at     timestamptz not null,
+  consumed_at    timestamptz,                            -- ST-07
+  superseded_at  timestamptz,                            -- ST-10: bị thay bằng challenge mới, hoặc không giao được OTP
+  consumer_ref   varchar(64),                            -- khoá idempotency của lệnh đã dùng challenge (FR-42)
+  constraint fk_challenge_customer      foreign key (customer_id) references identity.customer (id),
+  constraint ck_challenge_purpose       check (purpose in ('REGISTER','LOGIN_NEW_DEVICE','RESET_PASSWORD','CHANGE_PHONE','P2P','WITHDRAW')),
+  constraint ck_challenge_factor        check (factor in ('OTP','FACE')),
+  constraint ck_challenge_factor_purpose check (factor = 'OTP' or purpose in ('CHANGE_PHONE','P2P','WITHDRAW')),
+  constraint ck_challenge_owner         check ((purpose = 'REGISTER') = (customer_id is null)),
+  constraint ck_challenge_phone         check ((factor = 'OTP') = (phone is not null)),
+  constraint ck_challenge_code          check ((factor = 'OTP') = (code_hash is not null)),
+  constraint ck_challenge_code_len      check (code_hash is null or octet_length(code_hash) = 32),
+  constraint ck_challenge_payload_req   check (purpose not in ('P2P','WITHDRAW') or payload_hash is not null),
+  constraint ck_challenge_payload_none  check (purpose not in ('REGISTER','LOGIN_NEW_DEVICE','RESET_PASSWORD') or payload_hash is null),
+  constraint ck_challenge_attempts      check (attempts >= 0),
+  constraint ck_challenge_expiry        check (expires_at > created_at),
+  constraint ck_challenge_terminal      check (consumed_at is null or superseded_at is null),
+  constraint ck_challenge_consumer_ref  check (consumer_ref is null or (consumed_at is not null and purpose in ('P2P','WITHDRAW')))
+);
+-- Q8: tối đa một challenge còn sống cho cùng (mục đích, yếu tố, đối tượng, nội dung lệnh)
+create unique index uq_challenge_active on identity.otp_challenge
+  (purpose, factor, (coalesce(customer_id::text, phone)), (coalesce(payload_hash, '\x'::bytea)))
+  where consumed_at is null and superseded_at is null;
+```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| Thêm `superseded_at`, `created_at` | Trạng thái `SUPERSEDED` chưa có; `created_at` để tính `resendAfter` và dọn | ST-10, FR-12 |
+| `code_hash` nullable, kèm `ck_challenge_code` | FACE không có mã; OTP luôn có mã | FR-09 |
+| `code_hash` là HMAC có khoá và có `id` trong dữ liệu băm | Mã chỉ có 10^6 giá trị, băm không khoá bị dò ngược trong tích tắc nếu lộ DB | FR-09, `[Thiết kế §10]` nói "hash"; đây là cụ thể hoá |
+| `uq_challenge_active` | FR-12 thành bất biến của DB: cấp challenge mới phải vô hiệu challenge cũ trước, nếu không insert bị từ chối. Hai lần gửi lại đồng thời: một bên thua, không có hai OTP cùng sống. Lệnh khác nội dung (khác `payload_hash`) sống song song được | FR-12, FR-10 |
+| `consumer_ref` chỉ có khi đã `consumed_at` và chỉ cho mục đích giao dịch | Challenge phục vụ đúng một lệnh; xác minh lại cùng `consumerRef` vẫn thành công | FR-42 |
+| Không có cột trạng thái | `EXPIRED` suy từ `expires_at`, `EXHAUSTED` suy từ `attempts` so với `auth.otp.max_attempts` (tham số cấu hình, không cố định trong DB) | ST-06..ST-11 |
+| Đếm số lần gửi OTP và `resendAfter` nằm ở Redis, không ở bảng này | SĐT chưa đăng ký không có hàng trong bảng; đếm ở DB làm hành vi giới hạn tần suất khác nhau giữa SĐT có và không có tài khoản, tức là dò được tài khoản | FR-02, FR-13, FR-32; design (Redis đếm OTP); xem DQ2 |
+
+```pgsql
+-- Nhập sai/đúng OTP: tăng lượt nguyên tử; 0 dòng = hết hạn, hết lượt, đã dùng hoặc bị thay → CHALLENGE_INVALID
+update identity.otp_challenge set attempts = attempts + 1
+ where id = :id and consumed_at is null and superseded_at is null and expires_at > now() and attempts < :max_attempts
+returning attempts;
+-- Cấp challenge mới: vô hiệu cái cũ trước, cùng transaction với insert
+update identity.otp_challenge set superseded_at = now()
+ where purpose = :purpose and factor = :factor and coalesce(customer_id::text, phone) = :subject
+   and coalesce(payload_hash, '\x'::bytea) = :payload and consumed_at is null and superseded_at is null;
+-- Xác minh challenge giao dịch (FR-42), bước 1: xác minh lại với cùng consumerRef thì thành công, không cần OTP,
+-- kể cả khi expires_at đã qua (challenge phải còn dùng được trong cửa sổ idempotency của lệnh)
+select 1 from identity.otp_challenge where id = :id and consumer_ref = :ref and consumed_at is not null;
+-- bước 2 (lần đầu, sau khi ứng dụng đã so khớp OTP và payload_hash): claim nguyên tử, chỉ một consumerRef thắng
+update identity.otp_challenge set consumed_at = now(), consumer_ref = :ref
+ where id = :id and consumed_at is null and superseded_at is null and expires_at > now();   -- 0 dòng = không hợp lệ
+```
+
+**Dữ liệu cá nhân:** `phone`. Xoá sau 7 ngày. `payload_hash` là băm, không chứa nội dung lệnh.
+
+**Truy vết:** FR-01, FR-09..FR-14, FR-20, FR-32, FR-35, FR-41, FR-42, ST-06..ST-11.
+
+### `identity.consent`
+**Mục đích:** bằng chứng khách đã đồng ý điều khoản theo từng mục đích. Loại: chỉ thêm.
+
+```sql
+create table identity.consent (
+  id             uuid primary key,
+  customer_id    uuid not null,
+  purpose        varchar(32) not null,
+  terms_version  varchar(16) not null,
+  granted        boolean not null,
+  ip             inet not null,
+  user_agent     varchar(256) not null,
+  created_at     timestamptz not null default now(),
+  constraint fk_consent_customer foreign key (customer_id) references identity.customer (id),
+  constraint ck_consent_purpose  check (purpose in ('TERMS','BIOMETRIC_PROCESSING','MARKETING'))
+);
+create index ix_consent_customer on identity.consent (customer_id, purpose, created_at desc);   -- Q9
+-- Chỉ thêm (FR-04). Job ẩn danh chạy bằng role riêng chỉ có SELECT và UPDATE (ip, user_agent).
+revoke update, delete on identity.consent from identity_svc;
+```
+
+**Ghi chú thiết kế**
+| Quyết định | Lý do | Nguồn |
+|---|---|---|
+| `REVOKE UPDATE, DELETE` | Bằng chứng đồng ý không được sửa hay xoá | FR-04, NFR-07 |
+| Trạng thái hiện tại = dòng mới nhất theo `(customer_id, purpose)` | Rút lại đồng ý là thêm dòng `granted = false`, không sửa dòng cũ | FR-40 |
+| `ip`, `user_agent` `NOT NULL` | FR-04 bắt buộc ghi; ứng dụng cắt `user_agent` còn 256 ký tự | FR-04 |
+
+```pgsql
+-- Q9: đồng ý hiện tại mỗi mục đích
+select distinct on (purpose) purpose, terms_version, granted, created_at
+  from identity.consent where customer_id = :id
+ order by purpose, created_at desc, id desc;
+```
+
+**Dữ liệu cá nhân:** `ip`, `user_agent`. Khi hết hạn lưu trữ: ẩn danh bằng `ip = '0.0.0.0'`, `user_agent = ''`; giữ `purpose`, `terms_version`, `granted`, `created_at` để vẫn chứng minh được đã đồng ý.
+
+**Truy vết:** FR-04, FR-40, NFR-07.
+
+### Ẩn danh dữ liệu cá nhân (NFR-L-07)
+Hạn lưu trữ theo bảng 7.5 của requirements chưa chốt `[OQ-005]`. Khi hết hạn và không còn nghĩa vụ pháp lý, job hằng ngày của `identity`:
+
+| Bảng | Cột | Giá trị sau ẩn danh |
+|---|---|---|
+| `customer` | `phone` | Chưa quyết. Giá trị ẩn danh phải duy nhất và hiện không thoả `ck_customer_phone`, nên cần nới ràng buộc này hoặc dùng số giả hợp lệ. Chốt cùng F-ACC-03 và OQ-039 |
+| `customer` | `full_name` | `'ANONYMIZED'` |
+| `device` | dòng của khách | Xoá |
+| `consent` | `ip`, `user_agent` | `0.0.0.0`, rỗng |
+
+Việc ẩn danh `customer.phone` đụng ràng buộc `ck_customer_phone` và liên quan OQ-039 (SĐT của tài khoản đã đóng); chốt cùng F-ACC-03.
+
+### Đã kiểm
+**Đã kiểm (2026-11-04):** DDL của mục này (6 bảng, 4 index) được tách từ chính tài liệu và chạy được trên PostgreSQL 16, với `identity_svc` là chủ bảng (để `REVOKE` có tác dụng như khi triển khai). 75 ca đều đạt:
+- **48 ca vi phạm** bị chặn đúng loại lỗi và đúng tên ràng buộc hoặc cột: SĐT sai dạng, trùng SĐT, họ tên chưa chuẩn hoá, băm không phải Argon2id, fingerprint và token sai độ dài, hạn token sai, 13 tổ hợp vô nghĩa của challenge, hai challenge cùng sống, đồng ý thiếu IP, `UPDATE`/`DELETE` trên `consent` bị từ chối quyền.
+- **11 ca hợp lệ** vẫn được nhận: challenge khác nội dung sống song song, `FACE` song song `OTP` của `CHANGE_PHONE`, họ tên đúng 128 ký tự, cùng fingerprint ở khách khác...
+- **16 kiểm tra hành vi** của các câu truy vấn nguyên tử ghi trong mục này: xoay vòng refresh token chỉ một lần thắng, thu hồi cả family không đụng family khác, đúng 5 lượt nhập OTP trong 7 lần thử, `consumerRef` đầu tiên thắng và xác minh lại cùng ref tìm thấy, bộ đếm sai dừng khi đã khoá, đồng ý mới nhất, khoá tài khoản lần hai không tăng `version`.
+
+Thử bỏ `uq_challenge_active` thì đúng 3 ca challenge fail, tức bộ kiểm tra bắt được lỗi. Role ẩn danh có `SELECT` và `UPDATE (ip, user_agent)` sửa được hai cột đó, nhưng bị từ chối khi sửa `granted` hoặc xoá; role ứng dụng bị từ chối sửa `consent`.
+
+### Câu hỏi mở (identity)
+
+ID chung: DQ1 = OQ-045, DQ2 = OQ-046 ([open-questions.md](../open-questions.md)). Câu hỏi của SRS đã có ID riêng: OQ-038, OQ-039, OQ-040, OQ-043, OQ-044.
+| # | Câu hỏi | Ảnh hưởng | Ai quyết định |
+|---|---|---|---|
+| DQ1 | Challenge `CHANGE_PHONE` (cả `FACE` và `OTP`) có gắn `payload_hash` = băm SĐT mới không? SRS F-ACC-01.FR-35 chưa nói; không gắn thì khuôn mặt đã xác thực cho SĐT X có thể dùng cho SĐT Y. Schema cho phép cả hai (cột nullable với `CHANGE_PHONE`) | FR-35, `otp_challenge.payload_hash` | Rủi ro / Bảo mật |
+| DQ2 | Trần gửi OTP và `resendAfter` đặt ở Redis, nên mất khi Redis khởi động lại (kẻ tấn công được thêm lượt gửi). Chấp nhận, hay cần lưu bền (ví dụ bảng đếm theo `(phone, purpose)` không phụ thuộc tài khoản tồn tại)? | FR-12, FR-13 | Kiến trúc / Bảo mật |
+
+### Thay đổi so với bản trước
+Chưa có dữ liệu thật và chưa có migration, nên không có thay đổi phá tương thích. Nếu đã có dữ liệu thì mỗi dòng dưới đây cần expand → migrate → contract.
+
+| Thay đổi | Bảng | Ảnh hưởng |
+|---|---|---|
+| Bỏ cột `email` | `customer` | Không FR nào dùng. Thêm lại nếu OQ-040 chọn email |
+| `full_name` thành `NOT NULL` + `ck_customer_full_name` | `customer` | Dữ liệu cũ null/chưa chuẩn hoá phải sửa trước |
+| Thêm `version`, `updated_at` | `customer` | Thêm cột có default, an toàn |
+| Thêm `ck_customer_phone`, `ck_credential_algo`, `ck_device_fingerprint` | `customer`, `credential`, `device` | Dữ liệu cũ vi phạm phải sửa trước |
+| `trusted boolean` thay bằng `trusted_at timestamptz` | `device` | Đổi kiểu: `trusted = true` → `trusted_at = created_at` |
+| Thêm `family_expires_at` (`NOT NULL`), `created_at` | `refresh_token` | Token đang sống: gán `family_expires_at = expires_at` khi migrate |
+| `code_hash` thành nullable; thêm `created_at`, `superseded_at`; thêm 13 `CHECK` và `uq_challenge_active` | `otp_challenge` | Challenge sống ngắn, có thể xoá hết khi migrate |
+| Thêm khoá ngoại nội bộ (`credential`, `device`, `refresh_token`, `otp_challenge`, `consent` → `customer`; `refresh_token` → `device`) | các bảng trên | Cùng database nên hợp lệ |
+| `ip`, `user_agent` thành `NOT NULL`; thêm `ck_consent_purpose`, `REVOKE UPDATE, DELETE` | `consent` | Dữ liệu cũ null phải bổ sung trước |
 
 ---
 
@@ -792,4 +1105,5 @@ Bảng `internal_blacklist` chuyển từ `kyc` sang `aml_db`. Mọi DB đều c
 
 | Ngày | Thay đổi | Lý do / nguồn |
 |---|---|---|
+| 2026-11-04 | Mục `identity` viết lại: thêm ERD, bảng truy vấn, khối lượng, ẩn danh. `customer`: thêm `version`, `updated_at`, kiểm chuẩn hoá SĐT và họ tên, `full_name` `NOT NULL`, bỏ `email`. `credential`: kiểm Argon2id. `device`: `trusted` → `trusted_at`, kiểm độ dài fingerprint. `refresh_token`: thêm `family_expires_at`, `created_at`, ràng buộc hạn, index thu hồi. `otp_challenge`: thêm `superseded_at`, `created_at`, `code_hash` nullable, 13 `CHECK`, `uq_challenge_active`. `consent`: `ip`, `user_agent` `NOT NULL`, kiểm `purpose`, `REVOKE UPDATE, DELETE`. Thêm khoá ngoại nội bộ. DDL và 75 ca kiểm đã chạy trên PostgreSQL 16. Thêm DQ1, DQ2 (OQ-045, OQ-046) | Đối chiếu SRS F-ACC-01 bằng skill `data-model-design`. Không phá tương thích: chưa có dữ liệu thật |
 | 2026-11-04 | Mục `payment`: thêm `version`, `trace_id`, `failure_detail`; 8 ràng buộc `CHECK` mới (tự chuyển, P2P không `UNKNOWN`, trường theo loại lệnh, bước saga theo loại, `FAILED` có mã, phí có rule, lời nhắn, `version`/`check_attempts`); 2 index mới (lệnh treo theo ví, theo thời gian); `wallet_activity` partition theo tháng, thêm `CHECK`. Thêm ERD, bảng truy vấn, khối lượng. DDL và 14 ca vi phạm đã chạy thử trên PostgreSQL 16 | Đối chiếu SRS F-PAY-03 bằng skill `data-model-design`. Không phá tương thích: chưa có dữ liệu thật |

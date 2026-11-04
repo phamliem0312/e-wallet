@@ -2,7 +2,7 @@
 
 Ví điện tử của một tổ chức trung gian thanh toán, liên kết với tài khoản ngân hàng của khách. Giai đoạn 1 gồm: khách hàng cá nhân (B2C) trên web và back-office (CMS); tích hợp bên thứ 3 (ngân hàng, eKYC, thông báo, AML) **chỉ có interface + fake**.
 
-Trạng thái: tài liệu đã xong cho F-PAY-03; **M1 (nền tảng) đang dựng** trong `source-code/` (starter `platform`, docker compose; chưa có service nghiệp vụ). Xem `source-code/README.md` để biết đã làm và chưa làm gì.
+Trạng thái: tài liệu đã xong cho F-PAY-03 (đủ SRS, UI, test case, hợp đồng) và F-ACC-01 (SRS, data model, hợp đồng; thiếu UI, test case); **M1 (nền tảng) đang dựng** trong `source-code/` (starter `platform`, docker compose; chưa có service nghiệp vụ). Tiến độ từng việc ở `docs/worklog.md`; xem `source-code/README.md` để biết code đã làm và chưa làm gì.
 
 Ngôn ngữ làm việc: **tiếng Việt**, giữ thuật ngữ kỹ thuật tiếng Anh. Code, tên bảng, tên cột, ID bằng tiếng Anh.
 
