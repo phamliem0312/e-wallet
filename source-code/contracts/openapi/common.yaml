@@ -59,6 +59,7 @@ components:
         - BANK_UNAVAILABLE
         - BANK_LINK_INVALID
         - HOLDER_NAME_MISMATCH
+        - INTERNAL_ERROR
     Problem:
       type: object
       description: RFC 9457 Problem Details. `title`/`detail` không dùng làm thông điệp cho người dùng; frontend dựng thông điệp từ `code` và `params`.

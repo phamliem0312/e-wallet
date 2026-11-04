@@ -1,0 +1,5 @@
+* text=auto
+# Script chạy trong Linux (container, CI) phải luôn là LF
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf

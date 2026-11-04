@@ -2,7 +2,7 @@
 
 Ví điện tử của một tổ chức trung gian thanh toán, liên kết với tài khoản ngân hàng của khách. Giai đoạn 1 gồm: khách hàng cá nhân (B2C) trên web và back-office (CMS); tích hợp bên thứ 3 (ngân hàng, eKYC, thông báo, AML) **chỉ có interface + fake**.
 
-Trạng thái: đang ở giai đoạn tài liệu; `source-code/` còn trống. Mốc tiếp theo là M1 (nền tảng) theo design §12.4.
+Trạng thái: tài liệu đã xong cho F-PAY-03; **M1 (nền tảng) đang dựng** trong `source-code/` (starter `platform`, docker compose; chưa có service nghiệp vụ). Xem `source-code/README.md` để biết đã làm và chưa làm gì.
 
 Ngôn ngữ làm việc: **tiếng Việt**, giữ thuật ngữ kỹ thuật tiếng Anh. Code, tên bảng, tên cột, ID bằng tiếng Anh.
 
@@ -19,6 +19,7 @@ Ngôn ngữ làm việc: **tiếng Việt**, giữ thuật ngữ kỹ thuật ti
 | `docs/srs/features/` | Đặc tả từng tính năng (FR/BR/AC) | Hành vi chi tiết |
 | `docs/ui/` | Design system + đặc tả UI từng tính năng | Màn hình, trạng thái, câu chữ |
 | `docs/test-cases/` | Test case từng tính năng + ma trận truy vết | Cần kiểm chứng những gì |
+| `docs/worklog.md` | Nhật ký công việc theo thời gian | Đã làm gì, kiểm chứng ra sao |
 | `docs/open-questions.md` | **Mọi câu hỏi mở** của mọi tài liệu (ID `OQ-NNN`), người quyết định, việc bị chặn | Còn gì chưa quyết |
 
 Tài liệu mâu thuẫn nhau: không chọn một bên ngầm. Nêu mâu thuẫn ra, hoặc sửa tài liệu sai khi đã rõ bên nào đúng, và ghi vào lịch sử thay đổi của tài liệu đó.
@@ -78,10 +79,16 @@ ID không bao giờ đổi hay dùng lại; mục bị bỏ thì đánh dấu `D
 
 ## Lệnh
 
-Chưa có code. Cập nhật mục này khi scaffold M1 (build, test, chạy local).
+Chạy trong `source-code/`. Máy chỉ có JDK 8 thì build bằng container (lệnh đầy đủ ở `source-code/README.md`).
+
+- Build + test: `./gradlew build` (cần JDK 21). Test tích hợp dùng Testcontainers nên cần Docker.
+- Hạ tầng local: `docker compose up -d --wait` (Postgres, Kafka, Schema Registry, Redis).
+- Lint hợp đồng OpenAPI: `docker run --rm -v "${PWD}/contracts:/spec" -w /spec redocly/cli:latest lint openapi/<service>/public.yaml`.
+- Mạng công ty có thể chặn tải Gradle qua wrapper (GitHub bị chèn chứng chỉ TLS): dùng Gradle cài sẵn hoặc container `gradle:8.14-jdk21`. Không tắt kiểm tra chứng chỉ để vượt qua.
 
 ## Cách làm việc
 
+- **Ghi nhật ký:** xong mỗi phần việc thì thêm một mục vào đầu `docs/worklog.md` (làm gì, kết quả kiểm chứng thật, quyết định, việc còn dở) trước khi báo hoặc commit.
 - Báo kết quả trung thực: chưa chạy được build/test/kiểm cú pháp thì nói rõ là chưa kiểm.
 - Sửa tài liệu: tăng phiên bản và ghi lịch sử thay đổi trong tài liệu đó.
 - Câu hỏi mở mới: ghi trong tài liệu đang viết **và** thêm vào `docs/open-questions.md` (ID `OQ-` tiếp theo). Câu hỏi được trả lời: cập nhật ở đó, rồi cập nhật tài liệu nguồn và gỡ trạng thái `BLOCKED` của test case liên quan.
