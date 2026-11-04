@@ -38,7 +38,7 @@ Trạng thái spec: `Chưa viết` · `Draft` · `In review` · `Approved` · `C
 
 | ID | Tính năng | Actor | Yêu cầu sở hữu | Liên quan | Ưu tiên | Phụ thuộc | Dịch vụ (thiết kế) | Spec |
 |---|---|---|---|---|---|---|---|---|
-| F-ACC-01 | Đăng ký & đăng nhập | Khách | FR-ID-01, 05, 06 | NFR-S-02, 03; FR-LIM | M | — | identity, notification | Chưa viết |
+| F-ACC-01 | Đăng ký & đăng nhập | Khách | FR-ID-01, 05, 06 | FR-ID-04; NFR-S-01..04; NFR-L-03 | M | F-NTF-01 (chỉ interface gửi OTP), F-ACC-02 (chỉ UC-06 đổi SĐT) | identity, notification | [Draft](features/F-ACC-01-dang-ky-dang-nhap.md) |
 | F-ACC-02 | Định danh eKYC & phân cấp tài khoản | Khách, Nhân viên rủi ro | FR-ID-02, 03, 04, 07; FR-KYC-01..03; FR-BO-08 | NFR-L-02, 03 | M | F-ACC-01, F-AML-01 | kyc, aml, identity | Chưa viết |
 | F-ACC-03 | Đóng ví | Khách | FR-ID-08 | FR-WD-01 | M | F-ACC-01, F-FIN-01, F-PAY-04 | wallet, ledger, payment | Chưa viết |
 | F-BNK-01 | Liên kết tài khoản ngân hàng | Khách | FR-LK-01..04 | FR-LK-02; IR-06 | M | F-ACC-02, F-BNK-02 | bank-gateway, kyc | Chưa viết |
@@ -126,3 +126,4 @@ Danh sách đầy đủ của mọi tài liệu, kèm ID chung, người quyết
 |---|---|---|
 | 2026-11-04 | 1 | Tạo mới: 24 tính năng, 8 cross-cutting, 110 yêu cầu (78 gán / 31 cross-cutting / 1 ngoài phạm vi) |
 | 2026-11-04 | 1 | F-PAY-03 có spec Draft; thêm câu hỏi mở F-PAY-03.Q1..Q10 |
+| 2026-11-04 | 2 | F-ACC-01 có spec Draft (câu hỏi mở F-ACC-01.Q1..Q15 → OQ-030..044). Sửa cột "liên quan" của F-ACC-01: bỏ `FR-LIM` (hạn mức giao dịch, không liên quan đăng nhập), thêm `FR-ID-04`, `NFR-S-01..04`, `NFR-L-03`. Ghi phụ thuộc vòng F-ACC-01 ↔ F-ACC-02 (chỉ ở UC-06) và F-ACC-01 ↔ F-NTF-01 (chỉ interface); cơ chế challenge OTP dùng chung nằm ở F-ACC-01 |
