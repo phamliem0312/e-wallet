@@ -1,0 +1,164 @@
+openapi: 3.1.0
+info:
+  title: EWallet — component dùng chung
+  version: 0.1.0
+  description: Component dùng chung cho mọi API của EWallet. Không có endpoint.
+paths: {}
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID do client sinh cho mỗi lần dự định thực hiện lệnh tiền; giữ nguyên khi gửi lại, sinh mới sau khi lệnh FAILED.
+      schema:
+        type: string
+        format: uuid
+      example: 0193f2a4-7c1e-7b2a-9f00-1a2b3c4d5e01
+    Traceparent:
+      name: traceparent
+      in: header
+      required: false
+      description: W3C trace context.
+      schema:
+        type: string
+  headers:
+    RetryAfter:
+      description: Số giây cần chờ trước khi thử lại.
+      schema:
+        type: integer
+        minimum: 1
+  schemas:
+    MoneyVnd:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Số tiền, đơn vị đồng (VND), không có phần thập phân.
+      example: 100000
+    ErrorCode:
+      type: string
+      description: Mã lỗi nghiệp vụ ổn định. Danh sách CÓ THỂ MỞ RỘNG; client phải xử lý mã chưa biết như lỗi chung.
+      enum:
+        - VALIDATION_ERROR
+        - IDEMPOTENCY_KEY_REQUIRED
+        - IDEMPOTENCY_KEY_REUSED
+        - UNAUTHENTICATED
+        - TOKEN_EXPIRED
+        - FORBIDDEN
+        - NOT_FOUND
+        - WALLET_FROZEN
+        - KYC_REQUIRED
+        - RECIPIENT_NOT_FOUND
+        - RECIPIENT_UNAVAILABLE
+        - AMOUNT_OUT_OF_RANGE
+        - CHALLENGE_REQUIRED
+        - CHALLENGE_INVALID
+        - FEE_CHANGED
+        - STATE_CONFLICT
+        - RATE_LIMITED
+        - BANK_UNAVAILABLE
+        - BANK_LINK_INVALID
+        - HOLDER_NAME_MISMATCH
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details. `title`/`detail` không dùng làm thông điệp cho người dùng; frontend dựng thông điệp từ `code` và `params`.
+      required: [type, title, status, code, traceId]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        traceId:
+          type: string
+        detail:
+          type: string
+        params:
+          type: object
+          description: |
+            Dữ liệu để dựng thông điệp, theo `code`:
+            - AMOUNT_OUT_OF_RANGE → `minAmount`
+            - CHALLENGE_INVALID → `attemptsRemaining` (đề xuất OQ-019)
+          additionalProperties: true
+        errors:
+          type: array
+          description: Lỗi theo từng field (VALIDATION_ERROR).
+          items:
+            type: object
+            required: [field, code]
+            properties:
+              field:
+                type: string
+              code:
+                type: string
+              message:
+                type: string
+      example:
+        type: https://ewallet/errors/amount-out-of-range
+        title: Amount out of range
+        status: 422
+        code: AMOUNT_OUT_OF_RANGE
+        traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+        params:
+          minAmount: 1000
+  responses:
+    Problem400:
+      description: Yêu cầu không hợp lệ (VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem401:
+      description: Chưa đăng nhập hoặc token hết hạn (UNAUTHENTICATED, TOKEN_EXPIRED).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem403:
+      description: Không được phép thực hiện (xem mô tả của từng operation).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem404:
+      description: Không tìm thấy, hoặc tài nguyên không thuộc người gọi (không phân biệt hai trường hợp).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem409:
+      description: Xung đột (xem mô tả của từng operation).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem422:
+      description: Vi phạm quy tắc nghiệp vụ trước khi tạo lệnh (xem mô tả của từng operation).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Problem429:
+      description: Vượt giới hạn tần suất (RATE_LIMITED).
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  securitySchemes:
+    customerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT của khách, do `identity` phát hành; BFF gắn vào request.
+    staffJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT của nhân viên, do IdP nhân viên phát hành.

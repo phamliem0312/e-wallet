@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/events/payment/PaymentFailed/v1.json",
+  "title": "PaymentFailed v1 (data)",
+  "description": "Phần data của CloudEvents. Envelope: source=payment, type=PaymentFailed, subject=orderId, aggregateversion=version của lệnh. Topic payment.events, key=orderId. Consumer: limit (release), aml, notification, recon, audit.",
+  "type": "object",
+  "required": ["orderId", "type", "customerId", "walletId", "amount", "fee", "currency", "failureCode", "createdAt"],
+  "properties": {
+    "orderId": { "type": "string", "format": "uuid", "description": "= id reservation hạn mức cần release" },
+    "type": { "type": "string", "enum": ["TOPUP", "WITHDRAW", "P2P"] },
+    "customerId": { "type": "string", "format": "uuid" },
+    "walletId": { "type": "string", "format": "uuid" },
+    "counterpartyWalletId": { "type": "string", "format": "uuid" },
+    "amount": { "type": "integer", "minimum": 1 },
+    "fee": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "enum": ["VND"] },
+    "bankCode": { "type": "string" },
+    "externalRef": { "type": "string" },
+    "failureCode": { "type": "string", "description": "Có thể mở rộng: INSUFFICIENT_BALANCE, LIMIT_EXCEEDED, ACCOUNT_BLOCKED, BANK_REJECTED..." },
+    "createdAt": { "type": "string", "format": "date-time" }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "orderId": "0193f2a4-7c1e-7b2a-9f00-0000000000a3",
+      "type": "P2P",
+      "customerId": "0193f2a4-7c1e-7b2a-9f00-0000000000d1",
+      "walletId": "0193f2a4-7c1e-7b2a-9f00-0000000000b1",
+      "counterpartyWalletId": "0193f2a4-7c1e-7b2a-9f00-0000000000b2",
+      "amount": 100000,
+      "fee": 1000,
+      "currency": "VND",
+      "failureCode": "INSUFFICIENT_BALANCE",
+      "createdAt": "2026-11-04T07:32:00Z"
+    }
+  ]
+}

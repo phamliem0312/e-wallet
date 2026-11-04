@@ -1,0 +1,303 @@
+openapi: 3.1.0
+info:
+  title: EWallet payment — API khách hàng
+  version: 0.1.0
+  description: |
+    Phần chuyển tiền ví–ví (F-PAY-03). Đi qua `api-gateway`, prefix `/api/v1`.
+    Nguồn: docs/srs/features/F-PAY-03-chuyen-tien-vi-vi.md v0.2, docs/ui/features/F-PAY-03-chuyen-tien-vi-vi.md v0.1.
+servers:
+  - url: /api/v1
+security:
+  - customerJwt: []
+tags:
+  - name: transfers
+    description: Chuyển tiền ví–ví
+  - name: orders
+    description: Lệnh tiền
+paths:
+  /transfers/preview:
+    post:
+      operationId: previewTransfer
+      tags: [transfers]
+      summary: Xem trước phí, tổng tiền và yêu cầu xác thực
+      description: |
+        Không tạo lệnh, không giữ hạn mức, không ghi sổ (F-PAY-03.FR-06).
+        Mã lỗi: VALIDATION_ERROR (400), RECIPIENT_NOT_FOUND (404), RECIPIENT_UNAVAILABLE, AMOUNT_OUT_OF_RANGE (422).
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferInput'
+      responses:
+        '200':
+          description: Kết quả xem trước.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferPreview'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '404':
+          $ref: '../common.yaml#/components/responses/Problem404'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+  /transfers:
+    post:
+      operationId: createTransfer
+      tags: [transfers]
+      summary: Tạo lệnh chuyển tiền ví–ví
+      description: |
+        Tra `Idempotency-Key` trước mọi kiểm tra khác (F-PAY-03.FR-08): cùng khoá + cùng nội dung → trả lại đúng lệnh cũ.
+        Từ chối TRƯỚC khi tạo lệnh (không có lệnh nào được tạo):
+        - 400: VALIDATION_ERROR, IDEMPOTENCY_KEY_REQUIRED
+        - 403: WALLET_FROZEN, KYC_REQUIRED
+        - 404: RECIPIENT_NOT_FOUND
+        - 409: IDEMPOTENCY_KEY_REUSED, FEE_CHANGED
+        - 422: RECIPIENT_UNAVAILABLE, AMOUNT_OUT_OF_RANGE, CHALLENGE_REQUIRED, CHALLENGE_INVALID
+        SAU khi tạo lệnh: 200 (SUCCEEDED/FAILED) hoặc 202 (PROCESSING) kèm `Order`;
+        `failureCode` ∈ {INSUFFICIENT_BALANCE, LIMIT_EXCEEDED, ACCOUNT_BLOCKED}.
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/IdempotencyKey'
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+      responses:
+        '200':
+          description: Lệnh đã có kết quả cuối (SUCCEEDED hoặc FAILED).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+              examples:
+                succeeded:
+                  summary: F-PAY-03.AC-01
+                  value:
+                    id: 0193f2a4-7c1e-7b2a-9f00-0000000000a1
+                    type: P2P
+                    status: SUCCEEDED
+                    amount: 100000
+                    fee: 1000
+                    currency: VND
+                    counterpartyDisplay: NGUYEN V*** A
+                    createdAt: '2026-11-04T07:30:00Z'
+                limitExceeded:
+                  summary: F-PAY-03.AC-13 (dòng c)
+                  value:
+                    id: 0193f2a4-7c1e-7b2a-9f00-0000000000a2
+                    type: P2P
+                    status: FAILED
+                    amount: 5000001
+                    fee: 1000
+                    currency: VND
+                    counterpartyDisplay: NGUYEN V*** A
+                    failureCode: LIMIT_EXCEEDED
+                    failureDetail:
+                      scope: P2P_PER_TXN
+                      remaining: 5000000
+                    createdAt: '2026-11-04T07:31:00Z'
+        '202':
+          description: Lệnh chưa có kết quả cuối; hỏi lại bằng `GET /orders/{orderId}`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '403':
+          $ref: '../common.yaml#/components/responses/Problem403'
+        '404':
+          $ref: '../common.yaml#/components/responses/Problem404'
+        '409':
+          $ref: '../common.yaml#/components/responses/Problem409'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      tags: [orders]
+      summary: Lấy trạng thái và chi tiết một lệnh
+      description: Chỉ trả lệnh của người gọi; lệnh của người khác → 404, không phân biệt với lệnh không tồn tại (đề xuất cho OQ-023).
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Lệnh.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '404':
+          $ref: '../common.yaml#/components/responses/Problem404'
+components:
+  schemas:
+    PhoneNumber:
+      type: string
+      description: Dạng nội địa `0` + 9 chữ số hoặc `+84` + 9 chữ số; server chuẩn hoá về `+84…` (F-PAY-03.FR-02). Khoảng trắng chưa được chốt (OQ-016).
+      pattern: '^(0[0-9]{9}|\+84[0-9]{9})$'
+      example: '0900000002'
+    Note:
+      type: string
+      maxLength: 140
+      pattern: '^[^\u0000-\u001F\u007F]*$'
+      description: Lời nhắn, tối đa 140 ký tự, không chứa ký tự điều khiển (F-PAY-03.FR-31).
+      example: Tien an trua
+    TransferInput:
+      type: object
+      additionalProperties: false
+      required: [recipientPhone, amount]
+      properties:
+        recipientPhone:
+          $ref: '#/components/schemas/PhoneNumber'
+        amount:
+          allOf:
+            - $ref: '../common.yaml#/components/schemas/MoneyVnd'
+          minimum: 1
+        note:
+          $ref: '#/components/schemas/Note'
+      example:
+        recipientPhone: '0900000002'
+        amount: 100000
+        note: Tien an trua
+    CreateTransferRequest:
+      type: object
+      additionalProperties: false
+      required: [recipientPhone, amount, expectedFee]
+      properties:
+        recipientPhone:
+          $ref: '#/components/schemas/PhoneNumber'
+        amount:
+          allOf:
+            - $ref: '../common.yaml#/components/schemas/MoneyVnd'
+          minimum: 1
+        note:
+          $ref: '#/components/schemas/Note'
+        expectedFee:
+          allOf:
+            - $ref: '../common.yaml#/components/schemas/MoneyVnd'
+          description: Phí mà client đã hiển thị ở bước xem trước; khác phí hiện hành → 409 FEE_CHANGED. Không thuộc "nội dung lệnh" khi so `Idempotency-Key`.
+        challengeId:
+          type: string
+          format: uuid
+          description: Bắt buộc khi `requiredFactor` ≠ NONE.
+        otp:
+          type: string
+          pattern: '^[0-9]{6}$'
+          description: Bắt buộc khi `requiredFactor` = OTP.
+      example:
+        recipientPhone: '0900000002'
+        amount: 100000
+        note: Tien an trua
+        expectedFee: 1000
+    RequiredFactor:
+      type: string
+      enum: [NONE, OTP, FACE]
+      description: Yêu cầu xác thực tăng cường (F-PAY-03.BR-07).
+    TransferPreview:
+      type: object
+      required: [recipientDisplay, amount, fee, total, requiredFactor]
+      properties:
+        recipientDisplay:
+          type: string
+          description: Tên người nhận đã che, dạng do server quyết định (OQ-009).
+        amount:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        fee:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        total:
+          allOf:
+            - $ref: '../common.yaml#/components/schemas/MoneyVnd'
+          description: amount + fee (F-PAY-03.BR-02).
+        requiredFactor:
+          $ref: '#/components/schemas/RequiredFactor'
+      example:
+        recipientDisplay: NGUYEN V*** A
+        amount: 100000
+        fee: 1000
+        total: 101000
+        requiredFactor: NONE
+    OrderType:
+      type: string
+      enum: [TOPUP, WITHDRAW, P2P]
+      description: CÓ THỂ MỞ RỘNG; client hiển thị mặc định cho giá trị chưa biết.
+    OrderStatus:
+      type: string
+      enum: [PROCESSING, SUCCEEDED, FAILED, UNKNOWN]
+      description: CÓ THỂ MỞ RỘNG. Với khách, PROCESSING và UNKNOWN đều hiển thị là "Đang xử lý", không bao giờ là thất bại.
+    FailureCode:
+      type: string
+      enum: [INSUFFICIENT_BALANCE, LIMIT_EXCEEDED, ACCOUNT_BLOCKED, BANK_REJECTED, CREDITED_TO_SUSPENSE]
+      description: CÓ THỂ MỞ RỘNG; client xử lý mã chưa biết như lỗi chung kèm mã giao dịch.
+    FailureDetail:
+      type: object
+      description: |
+        Dữ liệu để dựng thông điệp lỗi (đề xuất cho OQ-020), lưu cùng lệnh nên gửi lại cùng khoá vẫn có.
+        LIMIT_EXCEEDED → `scope`, `remaining`.
+      additionalProperties: true
+      properties:
+        scope:
+          type: string
+          description: Phạm vi hạn mức bị vượt, ví dụ P2P_PER_TXN, P2P_DAY.
+        remaining:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+    Order:
+      type: object
+      required: [id, type, status, amount, fee, currency, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          $ref: '#/components/schemas/OrderType'
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        amount:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        fee:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        currency:
+          type: string
+          enum: [VND]
+        counterpartyDisplay:
+          type: string
+          description: Người nhận (P2P, tên đã che) hoặc tên ngân hàng (nạp/rút). Đề xuất cho OQ-021; lấy từ `wallet_activity.counterparty_display`.
+        failureCode:
+          $ref: '#/components/schemas/FailureCode'
+        failureDetail:
+          $ref: '#/components/schemas/FailureDetail'
+        bankRef:
+          type: string
+          description: Mã tham chiếu của ngân hàng (chỉ nạp/rút).
+        createdAt:
+          type: string
+          format: date-time
+      example:
+        id: 0193f2a4-7c1e-7b2a-9f00-0000000000a1
+        type: P2P
+        status: SUCCEEDED
+        amount: 100000
+        fee: 1000
+        currency: VND
+        counterpartyDisplay: NGUYEN V*** A
+        createdAt: '2026-11-04T07:30:00Z'
+  securitySchemes:
+    customerJwt:
+      $ref: '../common.yaml#/components/securitySchemes/customerJwt'

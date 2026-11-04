@@ -1,0 +1,24 @@
+﻿# Build / dependency output (sẽ có khi scaffold)
+build/
+out/
+target/
+.gradle/
+node_modules/
+.next/
+dist/
+coverage/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Secret và cấu hình cục bộ: không bao giờ commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.claude/settings.local.json

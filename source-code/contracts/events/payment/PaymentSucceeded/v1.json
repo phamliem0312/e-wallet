@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "contracts/events/payment/PaymentSucceeded/v1.json",
+  "title": "PaymentSucceeded v1 (data)",
+  "description": "Phần data của CloudEvents. Envelope: source=payment, type=PaymentSucceeded, subject=orderId, aggregateversion=version của lệnh. Topic payment.events, key=orderId. Consumer: limit (commit), aml (giám sát), notification, recon, audit. Không chứa dữ liệu nhạy cảm dạng rõ.",
+  "type": "object",
+  "required": ["orderId", "type", "customerId", "walletId", "amount", "fee", "currency", "createdAt"],
+  "properties": {
+    "orderId": { "type": "string", "format": "uuid", "description": "= id reservation hạn mức" },
+    "type": { "type": "string", "enum": ["TOPUP", "WITHDRAW", "P2P"] },
+    "customerId": { "type": "string", "format": "uuid", "description": "Khách tạo lệnh; aml cần để gắn cảnh báo" },
+    "walletId": { "type": "string", "format": "uuid" },
+    "counterpartyWalletId": { "type": "string", "format": "uuid", "description": "Chỉ P2P; notification tra khách nhận qua bản sao WalletOpened" },
+    "amount": { "type": "integer", "minimum": 1 },
+    "fee": { "type": "integer", "minimum": 0 },
+    "currency": { "type": "string", "enum": ["VND"] },
+    "bankCode": { "type": "string", "description": "Chỉ nạp/rút" },
+    "externalRef": { "type": "string", "description": "Chỉ nạp/rút; recon so khớp" },
+    "failureCode": { "type": "string", "description": "Chỉ khi SUCCEEDED kèm CREDITED_TO_SUSPENSE" },
+    "createdAt": { "type": "string", "format": "date-time", "description": "Thời điểm tạo lệnh; recon projection cần" }
+  },
+  "additionalProperties": true,
+  "examples": [
+    {
+      "orderId": "0193f2a4-7c1e-7b2a-9f00-0000000000a1",
+      "type": "P2P",
+      "customerId": "0193f2a4-7c1e-7b2a-9f00-0000000000d1",
+      "walletId": "0193f2a4-7c1e-7b2a-9f00-0000000000b1",
+      "counterpartyWalletId": "0193f2a4-7c1e-7b2a-9f00-0000000000b2",
+      "amount": 100000,
+      "fee": 1000,
+      "currency": "VND",
+      "createdAt": "2026-11-04T07:30:00Z"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+extends:
+  - recommended
+rules:
+  info-license: off              # API nội bộ, không phát hành công khai
+  no-server-example.com: error
+  operation-4xx-response: error
+  no-invalid-media-type-examples: error
+  no-invalid-schema-examples: error

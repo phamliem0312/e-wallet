@@ -1,0 +1,112 @@
+openapi: 3.1.0
+info:
+  title: EWallet wallet — API khách hàng
+  version: 0.1.0
+  description: Phần dùng cho F-PAY-03 (số dư khả dụng, tra cứu người nhận). Đi qua `api-gateway`, prefix `/api/v1`.
+servers:
+  - url: /api/v1
+security:
+  - customerJwt: []
+tags:
+  - name: wallet
+    description: Ví của người gọi
+  - name: transfers
+    description: Tra cứu người nhận
+paths:
+  /wallet:
+    get:
+      operationId: getMyWallet
+      tags: [wallet]
+      summary: Ví và số dư của người gọi
+      description: Số dư lấy từ `ledger` (đọc từ primary). Dùng ở F-PAY-03.S-01, S-02.
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Ví của người gọi.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyWallet'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+  /transfers/recipient:
+    get:
+      operationId: findRecipient
+      tags: [transfers]
+      summary: Tra cứu người nhận theo số điện thoại
+      description: |
+        Chỉ trả tên đã che (F-PAY-03.FR-01). Mã lỗi: VALIDATION_ERROR (400), RECIPIENT_NOT_FOUND (404),
+        RECIPIENT_UNAVAILABLE (422), RATE_LIMITED (429, F-PAY-03.FR-04). Không ghi log query string.
+        Việc gộp 404/422 thành một lỗi đang chờ OQ-010.
+      parameters:
+        - name: phone
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^(0[0-9]{9}|\+84[0-9]{9})$'
+          example: '0900000002'
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Người nhận hợp lệ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Recipient'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '404':
+          $ref: '../common.yaml#/components/responses/Problem404'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+components:
+  schemas:
+    MyWallet:
+      type: object
+      required: [walletId, status, balance, held, available, kycTier]
+      properties:
+        walletId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ACTIVE, FROZEN, CLOSING, CLOSED]
+          description: CÓ THỂ MỞ RỘNG.
+        balance:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        held:
+          $ref: '../common.yaml#/components/schemas/MoneyVnd'
+        available:
+          allOf:
+            - $ref: '../common.yaml#/components/schemas/MoneyVnd'
+          description: balance − held.
+        kycTier:
+          type: integer
+          minimum: -1
+          description: Cấp định danh; -1 = hạn chế (CCCD hết hạn).
+      example:
+        walletId: 0193f2a4-7c1e-7b2a-9f00-0000000000b1
+        status: ACTIVE
+        balance: 1000000
+        held: 0
+        available: 1000000
+        kycTier: 1
+    Recipient:
+      type: object
+      required: [displayName]
+      description: Không trả id ví hay thông tin khác của người nhận (không có màn hình nào cần).
+      properties:
+        displayName:
+          type: string
+          description: Tên đã che, dạng do server quyết định (OQ-009).
+      example:
+        displayName: NGUYEN V*** A
+  securitySchemes:
+    customerJwt:
+      $ref: '../common.yaml#/components/securitySchemes/customerJwt'

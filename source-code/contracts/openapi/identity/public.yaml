@@ -1,0 +1,107 @@
+openapi: 3.1.0
+info:
+  title: EWallet identity — API khách hàng (challenge)
+  version: 0.1.0
+  description: Phần cấp challenge cho xác thực tăng cường, dùng ở F-PAY-03.S-03. Đi qua `api-gateway`, prefix `/api/v1`.
+servers:
+  - url: /api/v1
+security:
+  - customerJwt: []
+tags:
+  - name: challenges
+    description: Xác thực tăng cường
+paths:
+  /challenges:
+    post:
+      operationId: createChallenge
+      tags: [challenges]
+      summary: Cấp challenge xác thực tăng cường cho một nội dung lệnh
+      description: |
+        Server hash `payload`; challenge chỉ dùng được cho đúng nội dung đó (F-PAY-03.FR-17).
+        Gọi lại để gửi lại mã (sau `resendAfter`) → challenge mới.
+        Mã lỗi: VALIDATION_ERROR (400), RATE_LIMITED (429).
+      parameters:
+        - $ref: '../common.yaml#/components/parameters/Traceparent'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateChallengeRequest'
+      responses:
+        '201':
+          description: Challenge đã được cấp; mã đã được gửi (factor OTP).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '400':
+          $ref: '../common.yaml#/components/responses/Problem400'
+        '401':
+          $ref: '../common.yaml#/components/responses/Problem401'
+        '429':
+          $ref: '../common.yaml#/components/responses/Problem429'
+components:
+  schemas:
+    CreateChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose, payload]
+      properties:
+        purpose:
+          type: string
+          enum: [P2P]
+          description: Mục đích; sẽ thêm WITHDRAW, CHANGE_PHONE... theo các tính năng khác.
+        payload:
+          $ref: '#/components/schemas/P2pChallengePayload'
+      example:
+        purpose: P2P
+        payload:
+          recipientPhone: '0900000002'
+          amount: 3000000
+    P2pChallengePayload:
+      type: object
+      additionalProperties: false
+      required: [recipientPhone, amount]
+      properties:
+        recipientPhone:
+          type: string
+          pattern: '^(0[0-9]{9}|\+84[0-9]{9})$'
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+    Challenge:
+      type: object
+      required: [challengeId, factor, expiresAt]
+      properties:
+        challengeId:
+          type: string
+          format: uuid
+        factor:
+          type: string
+          enum: [OTP, FACE]
+        expiresAt:
+          type: string
+          format: date-time
+        destinationMasked:
+          type: string
+          description: Nơi nhận mã đã che (factor OTP). Đề xuất cho OQ-019.
+        resendAfter:
+          type: string
+          format: date-time
+          description: Thời điểm sớm nhất được gửi lại mã. Đề xuất cho OQ-019.
+        attemptsRemaining:
+          type: integer
+          minimum: 0
+          description: Số lần nhập còn lại. Sau mỗi lần sai, giá trị mới trả về trong `Problem.params.attemptsRemaining` của CHALLENGE_INVALID. Đề xuất cho OQ-019.
+      example:
+        challengeId: 0193f2a4-7c1e-7b2a-9f00-0000000000c1
+        factor: OTP
+        expiresAt: '2026-11-04T07:33:00Z'
+        destinationMasked: '0900 *** 001'
+        resendAfter: '2026-11-04T07:30:30Z'
+        attemptsRemaining: 5
+  securitySchemes:
+    customerJwt:
+      $ref: '../common.yaml#/components/securitySchemes/customerJwt'
