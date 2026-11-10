@@ -4,6 +4,30 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-10 — Bộ agent và luồng phát triển tự động (ADR-0002)
+
+**Quyết định của chủ dự án (qua hộp hỏi):** git trunk-based + nhánh tính năng, merge `--no-ff` sau khi qua cổng (thay cho push thẳng `main`); agent chỉ dừng khi bị chặn; quyền dùng allowlist + chặn lệnh nguy hiểm (không dùng bypassPermissions).
+
+**Làm:**
+- `.claude/skills/deliver/SKILL.md`: điều phối một hạng mục backlog qua 3 cổng (tài liệu, test, review), giới hạn số vòng sửa, xử lý bị chặn, trả `PIPELINE_STATUS`.
+- `.claude/agents/`: `spec-author`, `doc-reviewer`, `implementer`, `test-engineer`, `code-reviewer`, `git-manager`, mỗi agent nạp sẵn skill dự án tương ứng và trả báo cáo theo khuôn cố định.
+- Hàng rào: `.claude/settings.json` (allowlist, deny, `acceptEdits`), hook `.claude/hooks/guard.mjs`.
+- `source-code/scripts/gradle.sh` (build container JDK 21 từ Git Bash), `scripts/run-pipeline.ps1` (headless, mỗi vòng một phiên mới). ADR-0002; cập nhật CLAUDE.md, `source-code/README.md`, `.gitignore`.
+
+**Kiểm chứng:**
+- `node .claude/hooks/guard.mjs --self-test`: 24/24 ca (13 lệnh phải chặn, 9 lệnh phải cho qua, commit trên `main` bị chặn và trên nhánh thì không). Chạy hook với JSON stdin thật: commit ở thư mục gốc (`main`) exit 2, ở worktree nhánh exit 0, JSON hỏng thì cho qua.
+- `bash source-code/scripts/gradle.sh build` từ worktree: BUILD SUCCESSFUL, 24 task, gồm test Testcontainers của messaging.
+- `claude -p` (haiku) trong worktree thấy đủ 6 agent và skill `deliver`. Cũng từ lần chạy này: rule deny `Write(...)` không có tác dụng (đã bỏ, chỉ giữ `Edit(...)`), và workspace chưa được trust nên headless bỏ qua allowlist.
+- Frontmatter của 6 agent: đủ trường, `name` khớp tên file, skill tham chiếu đều có. `run-pipeline.ps1` parse được trên PowerShell 5.1 (lưu UTF-8 có BOM).
+
+**Chưa kiểm / còn dở:**
+- Chưa chạy `/deliver` từ đầu đến cuối. Lần chạy đầu sẽ tự tạo `docs/backlog.md`.
+- Cần chủ dự án chạy `claude` tương tác ở gốc repo một lần để trust workspace, nếu không chế độ headless không dùng được allowlist.
+- Hook soát nhánh theo cwd của tool: `git -C <khác> commit` hoặc `cd khác && git commit` không bị soát.
+- Chưa có CI/PR (máy chưa có `gh`); điều kiện chuyển sang PR ghi ở ADR-0002.
+
+---
+
 ## 2026-11-10 — Quyết định phạm vi; test case F-ACC-01
 
 **Quyết định của chủ dự án (qua hộp hỏi):** làm toàn bộ dự án theo mốc M1 → M7; SRS Draft coi là đã duyệt để code (chỗ chưa quyết thành tham số cấu hình, giữ trong open-questions); tự commit và push sau mỗi phần đã kiểm chứng. Đã ghi vào CLAUDE.md.

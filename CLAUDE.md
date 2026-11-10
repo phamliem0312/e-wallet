@@ -11,7 +11,8 @@ Ngôn ngữ làm việc: **tiếng Việt**, giữ thuật ngữ kỹ thuật ti
 | Tài liệu | Nội dung | Nguồn sự thật cho |
 |---|---|---|
 | `docs/requirements.md` | Yêu cầu FR/IR/NFR/PR, quyết định đã chốt, câu hỏi mở | *Cái gì* cần làm |
-| `docs/adr/` | Quyết định kiến trúc (ADR-0001: microservices) | Kiến trúc; ADR mới hơn thắng |
+| `docs/adr/` | Quyết định kiến trúc (ADR-0001: microservices; ADR-0002: luồng agent + trunk-based) | Kiến trúc; ADR mới hơn thắng |
+| `docs/backlog.md` | Hạng mục theo mốc, trạng thái, nhánh (do `/deliver` tạo và cập nhật) | Việc gì làm tiếp |
 | `docs/design/*-design.md` | Kiến trúc, 14 service, luồng, nhất quán, bảo mật, triển khai | Service nào làm gì, giao tiếp ra sao |
 | `docs/design/*-api.md` | API khách/admin/nội bộ, danh mục event, provider interface | Hợp đồng HTTP và event |
 | `docs/design/*-data-model.md` | DDL theo từng service | Schema |
@@ -38,6 +39,19 @@ system-design-java-nextjs: kiến trúc, giao tiếp giữa service, review, ADR
 - **SRS Draft được coi là đã duyệt để code** (quyết định của chủ dự án, 2026-11-10). Code theo mặc định ghi trong spec; chỗ chưa quyết (ngưỡng, hạn mức, lựa chọn nghiệp vụ) phải là tham số cấu hình và giữ nguyên trong `docs/open-questions.md`, không được chôn thành hằng số.
 - Làm theo mốc M1 → M7 (design §12.4): mỗi mốc gồm tài liệu rồi code và test; báo cáo ở cuối mỗi mốc.
 - `source-code/contracts/` (OpenAPI, JSON Schema event) là nguồn sự thật của hợp đồng khi code; `docs/design/*-api.md` là bản tổng quan, cập nhật cùng lúc.
+
+### Luồng agent tự động (ADR-0002)
+
+`/deliver` (skill điều phối, phiên chính) làm một hạng mục của `docs/backlog.md` từ tài liệu tới `main`:
+
+```
+git-manager start → spec-author (tài liệu thiếu) → doc-reviewer [cổng] → implementer → test-engineer [cổng]
+  → code-reviewer [cổng] → worklog/backlog → git-manager finish (rebase, merge --no-ff, push) → tag m<N> cuối mốc
+```
+
+- Agent ở `.claude/agents/`. Người viết (spec-author, implementer, test-engineer) không tự duyệt; người soát (doc-reviewer, code-reviewer) chỉ đọc. Chỉ phiên chính và git-manager commit.
+- Chạy không người trông (lần đầu phải chạy `claude` tương tác ở gốc repo và chấp nhận hộp trust, nếu không chế độ headless bỏ qua allowlist): `powershell -File scripts/run-pipeline.ps1` (mỗi vòng một phiên mới, dừng khi `BLOCKED`/`COMPLETE`, log ở `.pipeline-logs/`). Không mở phiên khác ghi vào repo khi luồng đang chạy.
+- Hàng rào: allowlist/deny trong `.claude/settings.json`, hook `.claude/hooks/guard.mjs` (tự kiểm: `node .claude/hooks/guard.mjs --self-test`).
 
 ## Quy tắc không được vi phạm
 
@@ -83,7 +97,7 @@ ID không bao giờ đổi hay dùng lại; mục bị bỏ thì đánh dấu `D
 
 Chạy trong `source-code/`. Máy chỉ có JDK 8 thì build bằng container (lệnh đầy đủ ở `source-code/README.md`).
 
-- Build + test: `./gradlew build` (cần JDK 21). Test tích hợp dùng Testcontainers nên cần Docker.
+- Build + test: `./gradlew build` (cần JDK 21), hoặc từ gốc repo trong Git Bash: `bash source-code/scripts/gradle.sh build` (container JDK 21, cách agent dùng). Test tích hợp dùng Testcontainers nên cần Docker.
 - Hạ tầng local: `docker compose up -d --wait` (Postgres, Kafka, Schema Registry, Redis).
 - Lint hợp đồng OpenAPI: `docker run --rm -v "${PWD}/contracts:/spec" -w /spec redocly/cli:latest lint openapi/<service>/public.yaml`.
 - Mạng công ty có thể chặn tải Gradle qua wrapper (GitHub bị chèn chứng chỉ TLS): dùng Gradle cài sẵn hoặc container `gradle:8.14-jdk21`. Không tắt kiểm tra chứng chỉ để vượt qua.
@@ -91,7 +105,7 @@ Chạy trong `source-code/`. Máy chỉ có JDK 8 thì build bằng container (l
 ## Cách làm việc
 
 - **Ghi nhật ký:** xong mỗi phần việc thì thêm một mục vào đầu `docs/worklog.md` (làm gì, kết quả kiểm chứng thật, quyết định, việc còn dở) trước khi báo hoặc commit.
-- **Commit và push:** tự commit và push lên `origin/main` sau mỗi phần việc đã kiểm chứng (uỷ quyền của chủ dự án, 2026-11-10). Không push phần chưa build/test được mà không ghi rõ trong worklog.
+- **Git flow (ADR-0002):** không commit trên `main`. Mỗi phần việc một nhánh `<feat|fix|docs|chore|test>/<ID>-<slug>`, commit theo Conventional Commits (tóm tắt tiếng Việt); qua build, test, review thì tự merge `--no-ff` vào `main` và push `origin` (uỷ quyền của chủ dự án, 2026-11-10). Phần bị chặn thì push nhánh, không merge. Cấm force push, `reset --hard`, đổi remote.
 - Báo kết quả trung thực: chưa chạy được build/test/kiểm cú pháp thì nói rõ là chưa kiểm.
 - Sửa tài liệu: tăng phiên bản và ghi lịch sử thay đổi trong tài liệu đó.
 - Câu hỏi mở mới: ghi trong tài liệu đang viết **và** thêm vào `docs/open-questions.md` (ID `OQ-` tiếp theo). Câu hỏi được trả lời: cập nhật ở đó, rồi cập nhật tài liệu nguồn và gỡ trạng thái `BLOCKED` của test case liên quan.

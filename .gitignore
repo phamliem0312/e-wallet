@@ -22,3 +22,7 @@ Thumbs.db
 *.pem
 *.key
 .claude/settings.local.json
+
+# Luồng agent: worktree tạm và log chạy headless
+.claude/worktrees/
+.pipeline-logs/

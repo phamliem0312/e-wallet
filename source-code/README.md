@@ -37,7 +37,7 @@ docker run --rm -v "${PWD}/contracts:/spec" -w /spec redocly/cli:latest lint ope
 
 ### Build không cần cài JDK 21
 
-Dùng container Gradle. Lệnh dưới là cách đã dùng để kiểm tra nền tảng này:
+Dùng container Gradle. Từ gốc repo trong Git Bash, `bash source-code/scripts/gradle.sh <task...>` gói sẵn lệnh dưới (xử lý đường dẫn Windows). Lệnh gốc:
 
 ```
 docker run --rm -v "${PWD}:/p" -v ewallet-gradle-cache:/home/gradle/.gradle \
