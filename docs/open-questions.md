@@ -1,6 +1,6 @@
 # Câu hỏi mở — danh sách chung
 
-- Cập nhật: 2026-11-04 (thêm OQ-030..044 từ SRS F-ACC-01, OQ-045..046 từ data model identity, OQ-047..051 từ hợp đồng api F-ACC-01)
+- Cập nhật: 2026-11-04 (thêm OQ-030..044 từ SRS F-ACC-01, OQ-045..046 từ data model identity, OQ-047..051 từ hợp đồng api F-ACC-01); 2026-11-10 (OQ-052 từ test case F-ACC-01)
 - Đây là **nơi duy nhất để xem mọi câu hỏi đang chờ quyết định**. Mỗi tài liệu vẫn giữ bảng câu hỏi của riêng nó (ID cục bộ như `Q4`, `UQ2`) để đọc trong ngữ cảnh. File này gom lại, gán ID chung `OQ-NNN`, ghi ai quyết định và câu hỏi đang chặn việc gì.
 
 **Cách dùng:**
@@ -63,6 +63,7 @@
 | OQ-023 | Người khác gọi `GET /orders/{id}` của lệnh không thuộc mình: trả 403 hay 404. **Đề xuất (chờ duyệt):** 404, không phân biệt với lệnh không tồn tại (không lộ lệnh có tồn tại); khớp UI S-04 và quy ước của skill `api-contract` | Test case F-PAY-03 TQ1 | TC-P2P-040 | P2 |
 | OQ-047 | `displayMasked` trong `CustomerRegistered`/`CustomerUpdated` do `identity` tính (tên đầy đủ không được lên Kafka), nên `identity` phải áp quy tắc che tên (OQ-009). Quy tắc nằm ở đâu để `wallet` và `identity` cùng dùng? Có cập nhật lại khi eKYC xác nhận tên thật (`KycTierChanged`) không? | Hợp đồng api F-ACC-01 | events `CustomerRegistered`, `CustomerUpdated`; F-PAY-03.FR-01 | P2 |
 | OQ-048 | `GET /me` (hồ sơ, KYC tier, trạng thái) có trong api doc nhưng F-ACC-01 chưa có FR nào: thuộc F-ACC-01 hay F-ACC-02, trả field nào | Hợp đồng api F-ACC-01 | `AuthSession` không mang dữ liệu khách; UI sau đăng nhập | P2 |
+| OQ-052 | `AuditRecorded` chưa có JSON Schema; mỗi thao tác bảo mật của F-ACC-01 (đăng ký, đăng nhập đúng/sai, khoá tạm, đổi/đặt lại mật khẩu, đổi SĐT, thu hồi thiết bị, dùng lại refresh token) dùng `action`, `target` nào | Test case F-ACC-01 TQ1 | F-ACC-01.EV-08; TC-ACC-081; F-BO-05 | P2 |
 | OQ-051 | Cách `identity` yêu cầu gửi thông báo bảo mật không phải OTP (đăng ký trùng SĐT, thiết bị mới, đổi mật khẩu, đổi SĐT): API nội bộ của `notification`, hay `notification` nghe event của `identity` (chưa có event cho các việc này)? | Hợp đồng api F-ACC-01 | F-ACC-01.EV-04..EV-07; F-NTF-01 | P2 |
 
 ### Thiết kế hệ thống / Vận hành / Hạ tầng
@@ -96,7 +97,7 @@
 |---|---|---|
 | Pháp chế / Rủi ro | 14 | 4 (OQ-002, 003, 004, 006) |
 | Product | 18 | 0 |
-| Thiết kế API | 8 | 0 |
+| Thiết kế API | 9 | 0 |
 | Thiết kế hệ thống / Vận hành / Hạ tầng | 9 | 2 (OQ-024, 027) |
 | Thiết kế UI | 1 | 0 |
-| **Cộng** | **50** | **6** |
+| **Cộng** | **51** | **6** |

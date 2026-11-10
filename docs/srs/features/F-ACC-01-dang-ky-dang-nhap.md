@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Trạng thái | Draft |
-| Phiên bản | 0.3 |
+| Phiên bản | 0.4 |
 | Ngày | 2026-11-04 |
 | Yêu cầu nguồn (sở hữu) | FR-ID-01, FR-ID-05, FR-ID-06 |
 | Yêu cầu liên quan | FR-ID-04 (cấp định danh mặc định), NFR-S-01, NFR-S-02, NFR-S-03, NFR-S-04, NFR-L-03, NFR-O-02, NFR-P-01 |
@@ -481,7 +481,7 @@ Số liệu trong các AC là cấu hình **minh hoạ**: `auth.otp.ttl` = 3 ph�
 | F-ACC-01.AC-04 | FR-03, FR-04, FR-05, FR-07, ST-01, EV-01 | Challenge `REGISTER` của `+84900000001` còn hạn, OTP `123456` | Khách hoàn tất với OTP `123456`, mật khẩu hợp lệ, họ tên `Nguyễn Văn A`, đồng ý `TERMS` bản hiện hành | `201` kèm phiên. Có đúng 1 tài khoản `ACTIVE`, tier `0`; mật khẩu lưu dạng Argon2id; 1 bản ghi đồng ý (`TERMS`, phiên bản, granted = true, IP, user agent); thiết bị hiện tại là thiết bị đã biết; đúng 1 event `CustomerRegistered` có `customerId`, `phone`, `displayMasked` và không có mật khẩu/họ tên đầy đủ |
 | F-ACC-01.AC-05 | FR-04, BR-06 | Challenge `REGISTER` hợp lệ, `attemptsRemaining` = 5 | Khách hoàn tất với OTP đúng nhưng không đồng ý điều khoản | `422 CONSENT_REQUIRED`; không có tài khoản; challenge còn `ISSUED`, `attemptsRemaining` vẫn 5 |
 | F-ACC-01.AC-06 | BR-06, BR-02 | Challenge hợp lệ, `attemptsRemaining` = 5 | Khách gửi OTP đúng và mật khẩu 7 ký tự | `400 VALIDATION_ERROR` có lỗi ở trường `password`; challenge còn `ISSUED`, `attemptsRemaining` = 5; gửi lại với mật khẩu hợp lệ và cùng OTP thì thành công |
-| F-ACC-01.AC-07 | FR-06, BR-10 | Hai challenge `REGISTER` hợp lệ của cùng `+84900000001` (do gửi hai lần), chưa có tài khoản | Hai yêu cầu hoàn tất, mỗi yêu cầu một challenge, chạy đồng thời | Đúng 1 yêu cầu `201`; yêu cầu còn lại `409 PHONE_ALREADY_REGISTERED`; đúng 1 tài khoản, 1 event `CustomerRegistered` |
+| F-ACC-01.AC-07 | FR-06, BR-10 | Một challenge `REGISTER` hợp lệ của `+84900000001`, chưa có tài khoản | Hai yêu cầu hoàn tất với cùng challenge và OTP đúng chạy đồng thời | Đúng 1 yêu cầu `201`; yêu cầu còn lại `409 PHONE_ALREADY_REGISTERED` hoặc `422 CHALLENGE_INVALID`; đúng 1 tài khoản, 1 event `CustomerRegistered` |
 | F-ACC-01.AC-08 | FR-05 | Challenge hợp lệ; việc ghi event vào outbox bị ép lỗi (cần cơ chế ép lỗi, xem OQ-024) | Khách hoàn tất đăng ký | Yêu cầu thất bại; không có tài khoản, đồng ý, thiết bị hay event nào được ghi |
 | F-ACC-01.AC-09 | FR-07 | Khách vừa đăng ký xong trên thiết bị D | Khách đăng xuất rồi đăng nhập lại bằng SĐT, mật khẩu từ thiết bị D | `200` kèm phiên, không có `CHALLENGE_REQUIRED` |
 | F-ACC-01.AC-10 | FR-08, ST-11 | AC-04 đã thành công với challenge C | Gửi lại đúng yêu cầu hoàn tất với C | `422 CHALLENGE_INVALID`; vẫn đúng 1 tài khoản; không cấp phiên mới |
@@ -619,3 +619,4 @@ Danh sách chung có ID `OQ-` ở [open-questions.md](../../open-questions.md).
 | 0.1 | 2026-11-04 | Tạo mới: 8 use case, 43 FR, 10 BR, 15 ST, 9 EV, 7 NFR, 53 AC, 15 câu hỏi mở | Spec đầu tiên cho F-ACC-01 |
 | 0.2 | 2026-11-04 | ST-10: ghi chú data model đã có `superseded_at`. Q10 (OQ-039) mở rộng: SĐT cũ sau khi đổi SĐT có được đăng ký lại ngay không. Không đổi FR/BR/AC | Đối chiếu với data model `identity` (skill `data-model-design`) |
 | 0.3 | 2026-11-04 | 4.2: trỏ tới hợp đồng trong `contracts/`; `/auth/login/verify` thêm `deviceFingerprint`; `/me/phone` đổi `challengeId` thành `otpChallengeId`; `/challenges` thêm `factor?` và `purpose` `CHANGE_PHONE`; xác minh challenge nhận `payload` và trả `factor`; thay danh sách "chỗ lệch" bằng danh sách điểm hợp đồng bổ sung. §6: ghi `FORBIDDEN` do BFF. Không đổi FR/BR/AC | Viết hợp đồng API bằng skill `api-contract` |
+| 0.4 | 2026-11-10 | AC-07: bỏ tiền đề "hai challenge hợp lệ của cùng SĐT" (mâu thuẫn FR-12 và `uq_challenge_active`), thay bằng hai yêu cầu đồng thời với cùng challenge | Phát hiện khi sinh test case (TC-ACC-010) |

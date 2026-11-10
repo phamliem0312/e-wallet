@@ -4,6 +4,21 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-10 — Quyết định phạm vi; test case F-ACC-01
+
+**Quyết định của chủ dự án (qua hộp hỏi):** làm toàn bộ dự án theo mốc M1 → M7; SRS Draft coi là đã duyệt để code (chỗ chưa quyết thành tham số cấu hình, giữ trong open-questions); tự commit và push sau mỗi phần đã kiểm chứng. Đã ghi vào CLAUDE.md.
+
+**Làm:**
+- `docs/test-cases/F-ACC-01-dang-ky-dang-nhap.md`: 64 TC (UNIT 6, INTEGRATION 3, API 45, E2E 5, NFR 5); thêm mục F-ACC-01 vào `traceability.md`.
+- SRS F-ACC-01 lên v0.4: sửa AC-07 (tiền đề "hai challenge hợp lệ cùng SĐT" mâu thuẫn FR-12 và `uq_challenge_active`).
+- `docs/open-questions.md`: OQ-052 (`action`/`target` của audit), 51 câu mở.
+
+**Kiểm chứng (script):** 64 TC; cả 43 FR, 10 BR, 15 ST, 9 EV, 7 NFR và 53 AC đều được ít nhất một TC trích.
+
+**Còn dở:** TC-ACC-011 bị chặn (OQ-024); TC-ACC-004, 065, 067 chặn một phần (quy tắc che tên, luồng khuôn mặt). Ca E2E chưa có chi tiết màn hình vì chưa có đặc tả UI. Chưa có code test nào.
+
+---
+
 ## 2026-11-04 — Cập nhật tiến độ và commit
 
 - Thêm bảng "Tiến độ" vào `README.md`, cập nhật dòng trạng thái ở `README.md` và `CLAUDE.md` (trước đó vẫn ghi "chưa có code ứng dụng").

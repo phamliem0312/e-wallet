@@ -34,7 +34,9 @@ system-design-java-nextjs: kiến trúc, giao tiếp giữa service, review, ADR
 ```
 
 - Dùng skill của dự án (`.claude/skills/`) thay cho skill chung tương ứng (ví dụ ưu tiên `system-design-java-nextjs` hơn `engineering:system-design`).
-- Một tính năng đi theo thứ tự: SRS → (UI, data model) → hợp đồng API → test case → code. Không code tính năng chưa có SRS được duyệt.
+- Một tính năng đi theo thứ tự: SRS → (UI, data model) → hợp đồng API → test case → code. Không code tính năng chưa có SRS.
+- **SRS Draft được coi là đã duyệt để code** (quyết định của chủ dự án, 2026-11-10). Code theo mặc định ghi trong spec; chỗ chưa quyết (ngưỡng, hạn mức, lựa chọn nghiệp vụ) phải là tham số cấu hình và giữ nguyên trong `docs/open-questions.md`, không được chôn thành hằng số.
+- Làm theo mốc M1 → M7 (design §12.4): mỗi mốc gồm tài liệu rồi code và test; báo cáo ở cuối mỗi mốc.
 - `source-code/contracts/` (OpenAPI, JSON Schema event) là nguồn sự thật của hợp đồng khi code; `docs/design/*-api.md` là bản tổng quan, cập nhật cùng lúc.
 
 ## Quy tắc không được vi phạm
@@ -89,6 +91,7 @@ Chạy trong `source-code/`. Máy chỉ có JDK 8 thì build bằng container (l
 ## Cách làm việc
 
 - **Ghi nhật ký:** xong mỗi phần việc thì thêm một mục vào đầu `docs/worklog.md` (làm gì, kết quả kiểm chứng thật, quyết định, việc còn dở) trước khi báo hoặc commit.
+- **Commit và push:** tự commit và push lên `origin/main` sau mỗi phần việc đã kiểm chứng (uỷ quyền của chủ dự án, 2026-11-10). Không push phần chưa build/test được mà không ghi rõ trong worklog.
 - Báo kết quả trung thực: chưa chạy được build/test/kiểm cú pháp thì nói rõ là chưa kiểm.
 - Sửa tài liệu: tăng phiên bản và ghi lịch sử thay đổi trong tài liệu đó.
 - Câu hỏi mở mới: ghi trong tài liệu đang viết **và** thêm vào `docs/open-questions.md` (ID `OQ-` tiếp theo). Câu hỏi được trả lời: cập nhật ở đó, rồi cập nhật tài liệu nguồn và gỡ trạng thái `BLOCKED` của test case liên quan.

@@ -1,7 +1,7 @@
 # Ma trận truy vết yêu cầu → test case
 
-- Cập nhật: 2026-11-04
-- Phạm vi hiện có: F-PAY-03 (tính năng duy nhất đã có SRS)
+- Cập nhật: 2026-11-10
+- Phạm vi hiện có: F-PAY-03, F-ACC-01
 
 Trạng thái phủ: ✅ đã phủ · ⚠️ phủ một phần · ⏸️ bị chặn · ❌ chưa phủ
 
@@ -84,3 +84,54 @@ Mọi AC-01..42 đều có ít nhất một TC (cột "AC" trong từng test cas
 ### Tổng hợp
 - Mục SRS trong phạm vi (SRS v0.2): 32 FR + 8 BR + 4 ST + 4 EV + 7 NFR = 55. Đã phủ đầy đủ: 42 · phủ một phần: 9 · bị chặn: 3 · không phủ theo tính năng: 1 (NFR-06).
 - 55 TC: UNIT 10 · INTEGRATION 10 · API 26 · E2E 6 · NFR 3. Có 12 TC bị chặn toàn bộ hoặc một phần.
+
+## F-ACC-01 — Đăng ký & đăng nhập ([test case](F-ACC-01-dang-ky-dang-nhap.md))
+
+### Yêu cầu gốc (requirements.md)
+| Yêu cầu | SRS | Test case | Phủ |
+|---|---|---|---|
+| FR-ID-01 | FR-01..14, BR-01..03, 06, 10 | TC-ACC-001..003, 010, 011, 020..026, 030..036 | ⚠️ TC-011 chờ OQ-024 |
+| FR-ID-05 | FR-15..23, 38, 39, BR-04, 05, 07 | TC-ACC-005, 040..049, 070, 071, 086 | ⚠️ 2FA mỗi lần đăng nhập chờ OQ-030 |
+| FR-ID-06 | FR-32..37, BR-08 | TC-ACC-060..063, 065..068, 088 | ⚠️ khuôn mặt chờ OQ-028 |
+| NFR-S-02 | FR-27, 29, 30 | TC-ACC-053, 085, 089, 093 | ✅ |
+| NFR-S-03 | FR-11, 13, 17, 43, BR-07 | TC-ACC-033, 035, 042, 043, 080, 091 | ✅ (giá trị chờ OQ-036) |
+| NFR-L-03 | FR-04, 23, 40 | TC-ACC-022, 023, 040, 072 | ✅ |
+
+### Chi tiết theo SRS
+| SRS | Test case | Mức | Phủ |
+|---|---|---|---|
+| FR-01, FR-02 | 020, 021 | API | ✅ |
+| FR-03..FR-05, FR-07 | 022, 023, 026, 011 | API, INTEGRATION | ⚠️ FR-05 nhánh lỗi chờ OQ-024 |
+| FR-06 | 010 | INTEGRATION | ✅ |
+| FR-08 | 025 | API | ✅ |
+| FR-09..FR-14 | 006, 030..036 | UNIT, API | ✅ |
+| FR-15..FR-23 | 040..049 | API | ✅ |
+| FR-24..FR-28 | 050..054, 012 | API, INTEGRATION | ⚠️ FR-26 chờ OQ-037 |
+| FR-29, FR-30 | 085, 089 | E2E | ✅ (chạy được khi có web) |
+| FR-31 | 055 | API | ✅ |
+| FR-32..FR-34 | 060..063 | API | ✅ |
+| FR-35..FR-37 | 065..068 | API | ⚠️ OQ-028, OQ-045 |
+| FR-38..FR-40 | 070..072 | API | ✅ |
+| FR-41, FR-42 | 075, 076 | API | ✅ |
+| FR-43 | 080 | API | ✅ |
+| BR-01..BR-03 | 001..003 | UNIT | ✅ |
+| BR-04 | 005, 045 | UNIT, API | ⚠️ OQ-032 |
+| BR-05, BR-06 | 048, 023, 024, 062 | API | ✅ |
+| BR-07, BR-08 | 042, 043, 061, 063 | API | ✅ |
+| BR-09 | 046, 092 | API, NFR | ✅ |
+| BR-10 | 010, 066 | INTEGRATION, API | ✅ |
+| ST-01..ST-05 | 022, 044, 049, 055 | API | ✅ |
+| ST-06..ST-11 | 020, 025, 030, 031, 033, 034, 076 | API | ✅ |
+| ST-12..ST-15 | 051, 052, 054 | API | ✅ |
+| EV-01, EV-02 | 022, 065, 004 | API, UNIT | ⚠️ `displayMasked` chờ OQ-009, 047 |
+| EV-03..EV-07 | 020, 021, 046, 061, 063, 065 | API | ⚠️ kênh gửi chờ OQ-040, 051 |
+| EV-08 | 081 | API | ⚠️ TQ1 (OQ-052) |
+| EV-09 | 052, 094 | API, NFR | ✅ |
+| NFR-01..NFR-07 | 090..094, 092 | NFR | ✅ (NFR-05 kiểm trên staging) |
+
+### Tiêu chí chấp nhận
+Mọi AC-01..53 đều có ít nhất một TC. AC bị chặn hoặc chặn một phần: AC-08 (OQ-024), AC-41, AC-43 (OQ-028), AC-51 (TQ1).
+
+### Tổng hợp
+- Mục SRS trong phạm vi (SRS v0.4): 43 FR + 10 BR + 15 ST + 9 EV + 7 NFR = 84, tất cả có TC.
+- 64 TC: UNIT 6 · INTEGRATION 3 · API 45 · E2E 5 · NFR 5. Bị chặn toàn bộ: 1 (TC-ACC-011); chặn một phần: 3 (TC-ACC-004, 065, 067).
