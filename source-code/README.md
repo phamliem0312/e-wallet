@@ -1,6 +1,6 @@
 # source-code
 
-Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**; service đầu tiên là `identity` (F-ACC-01). Chưa có gateway và frontend.
+Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**; đã có `identity` (F-ACC-01) và `api-gateway`. Chưa có frontend.
 
 ```
 platform/
@@ -10,6 +10,8 @@ platform/
   platform-starter-observability  actuator + Prometheus + tracing W3C (chỉ gom dependency)
 services/
   identity                    đăng ký, đăng nhập, phiên, mật khẩu, thiết bị, challenge OTP (F-ACC-01); cổng 8101
+gateways/
+  api-gateway                 định tuyến, kiểm JWT (JWKS của identity), rate limit theo IP (Redis), giới hạn kích thước; cổng 8080
 contracts/                    OpenAPI + JSON Schema event (nguồn sự thật của hợp đồng)
 buildSrc/                     cấu hình Gradle dùng chung; phiên bản thư viện lấy từ BOM của Spring Boot ở đây
 deploy/local/                 script khởi tạo database cho docker compose
@@ -79,4 +81,4 @@ docker compose up -d --wait postgres kafka redis
 
 ## Chưa làm trong M1 (theo design §12.4)
 
-`platform-bom` riêng (hiện dùng BOM Spring Boot trong `buildSrc`), phần còn lại của observability (log JSON, `traceparent` vào event, exporter OTLP), sinh client từ OpenAPI, `api-gateway`, `frontend/`, Helm, CI, mesh. Serializer Schema Registry cho event: hiện gửi JSON thường, Schema Registry mới chỉ có trong compose.
+`platform-bom` riêng (hiện dùng BOM Spring Boot trong `buildSrc`), phần còn lại của observability (log JSON, `traceparent` vào event, exporter OTLP), sinh client từ OpenAPI, `frontend/`, Helm, CI, mesh. Serializer Schema Registry cho event: hiện gửi JSON thường, Schema Registry mới chỉ có trong compose.

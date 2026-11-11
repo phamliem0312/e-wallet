@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: api-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  tracing:
+    sampling:
+      probability: 1.0
+
+# Các con số dưới đây là [Giả định]: requirements chỉ nói "rate limit theo người dùng/IP/thiết bị" (NFR-S-03),
+# chưa có giá trị (OQ-036). Giới hạn chi tiết theo từng thao tác đăng nhập/OTP nằm ở identity.
+ewallet:
+  gateway:
+    identity-uri: ${IDENTITY_URI:http://localhost:8101}
+    issuer: identity
+    max-request-bytes: 1048576     # 1 MB; API của khách chỉ có JSON nhỏ
+    max-trusted-index: 1           # số bước proxy tin cậy trong X-Forwarded-For (web BFF đứng trước gateway)
+    rate-limit:
+      limit: 100
+      window: PT1M

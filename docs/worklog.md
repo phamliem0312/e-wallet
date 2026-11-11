@@ -4,6 +4,20 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-11 — `api-gateway` (M1) trên nhánh `feat/M1-api-gateway`
+
+Chủ dự án chọn để phiên này làm tiếp (thay vì luồng `/deliver` của ADR-0002). Nhánh tách từ `feat/F-ACC-01-identity-service`, nên cũng chưa merge: hai nhánh chờ review độc lập.
+
+**Làm:** `gateways/api-gateway` (Spring Cloud Gateway, WebFlux): định tuyến `/api/v1/auth/**`, `/api/v1/me/**`, `/api/v1/challenges` tới `identity`; kiểm JWT ES256 bằng JWKS của `identity` và đúng issuer; rate limit theo IP của khách trên Redis (cửa sổ cố định, lỗi Redis thì cho qua); giới hạn kích thước request; lỗi do gateway trả có dạng Problem. `/internal/**` và JWKS không được định tuyến.
+
+**Kiểm chứng:** 7/7 test (`GatewayTest`, identity giả bằng HTTP server của JDK, Redis thật): công khai đi qua, thiếu/sai chữ ký/sai issuer/hết hạn bị chặn với đúng mã, token hợp lệ đi qua kèm `Authorization`, `/internal/**` trả 404, path traversal trả 400, request thứ 6 trong cửa sổ bị `429` có `Retry-After`, request quá cỡ bị `413`.
+
+**Phát hiện:** tôi viết bộ chặn path traversal riêng (lo `/api/v1/auth/../../internal/...` lọt qua rồi được Tomcat của identity chuẩn hoá thành `/internal/...`). Bỏ thử bộ chặn thì test vẫn đạt: tường lửa mặc định của Spring Security (StrictServerWebExchangeFirewall) đã chặn. Đã xoá bộ chặn thừa, siết test về đúng mã 400 để giữ hành vi này nếu sau này ai tắt tường lửa.
+
+**Chưa làm / chưa kiểm:** chưa chạy cùng `identity` thật (mới test với identity giả); `traceparent` sang service phía sau dựa vào Micrometer tracing, chưa kiểm; lỗi 404/413 do Spring trả chưa có dạng Problem đầy đủ (`code`, `traceId`); số liệu rate limit và kích thước là giả định (OQ-036); `max-trusted-index` = 1 phụ thuộc cách web BFF đặt `X-Forwarded-For`, cần kiểm khi có web.
+
+---
+
 ## 2026-11-10 — Service `identity` (F-ACC-01) trên nhánh `feat/F-ACC-01-identity-service`
 
 **Bối cảnh git:** giữa chừng phát hiện nhánh `chore/agent-pipeline` (ADR-0002, do phiên khác tạo, chưa merge): không commit thẳng `main`, merge sau khi qua cổng review độc lập. Phần việc này vì vậy nằm trên nhánh tính năng, **đã push, chưa merge**: chưa qua cổng code-reviewer.

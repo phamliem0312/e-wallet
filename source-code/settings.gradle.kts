@@ -6,4 +6,5 @@ include(
     "platform:platform-starter-messaging",
     "platform:platform-starter-observability",
     "services:identity",
+    "gateways:api-gateway",
 )
