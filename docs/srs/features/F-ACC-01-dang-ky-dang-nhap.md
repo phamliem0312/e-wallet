@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Trạng thái | Draft |
-| Phiên bản | 0.4 |
+| Phiên bản | 0.5 |
 | Ngày | 2026-11-04 |
 | Yêu cầu nguồn (sở hữu) | FR-ID-01, FR-ID-05, FR-ID-06 |
 | Yêu cầu liên quan | FR-ID-04 (cấp định danh mặc định), NFR-S-01, NFR-S-02, NFR-S-03, NFR-S-04, NFR-L-03, NFR-O-02, NFR-P-01 |
@@ -453,7 +453,7 @@ Mã lỗi từ `INVALID_CREDENTIALS` đến `OTP_SEND_FAILED` là **mới**, c�
 | `INVALID_CREDENTIALS` | SĐT không có tài khoản, mật khẩu sai, hoặc tài khoản `CLOSED`; mật khẩu hiện tại sai khi đổi | 401 | "Số điện thoại hoặc mật khẩu không đúng." | Có |
 | `ACCOUNT_TEMP_LOCKED` | Đang trong thời gian khoá tạm (FR-17) | 403, `params.retryAfterSeconds` | "Bạn đã nhập sai nhiều lần. Vui lòng thử lại sau {mm:ss}." | Có, sau thời gian khoá |
 | `ACCOUNT_LOCKED` | Tài khoản `LOCKED` | 403 | "Tài khoản của bạn đang bị khoá. Vui lòng liên hệ hỗ trợ." | Không |
-| `CHALLENGE_REQUIRED` | Đăng nhập từ thiết bị mới | 422, kèm dữ liệu challenge | "Bạn đang đăng nhập trên thiết bị mới. Nhập mã xác thực gửi tới {destinationMasked}." | Có, với mã |
+| `CHALLENGE_REQUIRED` | Đăng nhập từ thiết bị mới; hoặc xin OTP đổi SĐT khi khuôn mặt chưa đạt (FR-35) | 422; khi đăng nhập kèm dữ liệu challenge | "Bạn đang đăng nhập trên thiết bị mới. Nhập mã xác thực gửi tới {destinationMasked}." | Có, với mã |
 | `CHALLENGE_INVALID` | OTP sai, hết hạn, hết lượt, đã dùng, sai mục đích/nội dung/`consumerRef`; khuôn mặt không đạt | 422, `params.attemptsRemaining` | "Mã xác thực không đúng hoặc đã hết hạn." | Có, nếu còn lượt hoặc xin mã mới |
 | `CONSENT_REQUIRED` | Chưa đồng ý điều khoản hiện hành | 422 | "Bạn cần đồng ý với điều khoản sử dụng để tiếp tục." | Có |
 | `PHONE_ALREADY_REGISTERED` | Hoàn tất đăng ký hoặc đổi SĐT với SĐT đã thuộc tài khoản khác | 409 | "Số điện thoại này đã được đăng ký." | Không |
@@ -620,3 +620,4 @@ Danh sách chung có ID `OQ-` ở [open-questions.md](../../open-questions.md).
 | 0.2 | 2026-11-04 | ST-10: ghi chú data model đã có `superseded_at`. Q10 (OQ-039) mở rộng: SĐT cũ sau khi đổi SĐT có được đăng ký lại ngay không. Không đổi FR/BR/AC | Đối chiếu với data model `identity` (skill `data-model-design`) |
 | 0.3 | 2026-11-04 | 4.2: trỏ tới hợp đồng trong `contracts/`; `/auth/login/verify` thêm `deviceFingerprint`; `/me/phone` đổi `challengeId` thành `otpChallengeId`; `/challenges` thêm `factor?` và `purpose` `CHANGE_PHONE`; xác minh challenge nhận `payload` và trả `factor`; thay danh sách "chỗ lệch" bằng danh sách điểm hợp đồng bổ sung. §6: ghi `FORBIDDEN` do BFF. Không đổi FR/BR/AC | Viết hợp đồng API bằng skill `api-contract` |
 | 0.4 | 2026-11-10 | AC-07: bỏ tiền đề "hai challenge hợp lệ của cùng SĐT" (mâu thuẫn FR-12 và `uq_challenge_active`), thay bằng hai yêu cầu đồng thời với cùng challenge | Phát hiện khi sinh test case (TC-ACC-010) |
+| 0.5 | 2026-11-10 | §6: `CHALLENGE_REQUIRED` cũng trả ở `POST /challenges` khi xin OTP đổi SĐT mà khuôn mặt chưa đạt (cụ thể hoá FR-35, AC-43). Không đổi FR/BR/AC | Phát hiện khi code `identity`; hợp đồng `identity/public.yaml` v0.2.1 |

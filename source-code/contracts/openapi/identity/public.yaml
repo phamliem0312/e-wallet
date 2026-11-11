@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EWallet identity — API khách hàng
-  version: 0.2.0
+  version: 0.2.1
   description: |
     Đăng ký, đăng nhập, phiên, mật khẩu, số điện thoại, thiết bị, đồng ý và challenge xác thực tăng cường.
     Đi qua `api-gateway`, prefix `/api/v1`. Nguồn: SRS F-ACC-01 v0.2.
@@ -434,12 +434,14 @@ paths:
       description: |
         Server hash `payload`; challenge chỉ dùng được cho đúng nội dung đó (F-PAY-03.FR-17, F-ACC-01.FR-41).
         - `P2P` + `OTP`: OTP gửi tới **SĐT đăng ký của người gọi**, không bao giờ tới SĐT do client chỉ định.
-        - `CHANGE_PHONE` + `OTP`: OTP gửi tới `payload.newPhone` (FR-35).
+        - `CHANGE_PHONE` + `OTP`: OTP gửi tới `payload.newPhone` (FR-35), **chỉ sau khi** challenge `CHANGE_PHONE` + `FACE` cho
+          cùng `newPhone` đã đạt và còn hạn; chưa có thì `422 CHALLENGE_REQUIRED` và không gửi OTP.
         - `FACE`: chỉ cấp challenge; việc nộp ảnh và xác thực thuộc F-ACC-02 (OQ-028).
         Cấp challenge mới cho cùng (mục đích, yếu tố, nội dung) thì challenge cũ bị vô hiệu (FR-12); gọi lại sau `resendAfter`
         để gửi lại mã. Khác nội dung thì sống song song.
-        Mã lỗi: VALIDATION_ERROR (400), UNAUTHENTICATED, TOKEN_EXPIRED (401), KYC_REQUIRED (403, `CHANGE_PHONE` + `FACE`
-        khi chưa có dữ liệu khuôn mặt), RATE_LIMITED (429), OTP_SEND_FAILED (503).
+        Mã lỗi: VALIDATION_ERROR (400), UNAUTHENTICATED, TOKEN_EXPIRED (401), KYC_REQUIRED (403, yếu tố `FACE` hoặc mục đích
+        `CHANGE_PHONE` khi khách chưa có dữ liệu khuôn mặt, FR-37), CHALLENGE_REQUIRED (422), RATE_LIMITED (429),
+        OTP_SEND_FAILED (503).
       parameters:
         - $ref: '../common.yaml#/components/parameters/Traceparent'
       requestBody:
@@ -461,6 +463,8 @@ paths:
           $ref: '../common.yaml#/components/responses/Problem401'
         '403':
           $ref: '../common.yaml#/components/responses/Problem403'
+        '422':
+          $ref: '../common.yaml#/components/responses/Problem422'
         '429':
           $ref: '../common.yaml#/components/responses/Problem429'
         '503':

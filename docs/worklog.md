@@ -4,6 +4,38 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-10 — Service `identity` (F-ACC-01) trên nhánh `feat/F-ACC-01-identity-service`
+
+**Bối cảnh git:** giữa chừng phát hiện nhánh `chore/agent-pipeline` (ADR-0002, do phiên khác tạo, chưa merge): không commit thẳng `main`, merge sau khi qua cổng review độc lập. Phần việc này vì vậy nằm trên nhánh tính năng, **đã push, chưa merge**: chưa qua cổng code-reviewer.
+
+**Làm:**
+- `services/identity`: 15 endpoint theo hợp đồng (đăng ký, đăng nhập, xác minh thiết bị mới, làm mới phiên, đăng xuất, quên/đặt lại/đổi mật khẩu, đổi SĐT, thiết bị, đồng ý, challenge, xác minh challenge nội bộ) và JWKS. Migration `V1__identity.sql` sinh tự động từ DDL của data model.
+- `platform-starter-web`: kiểm JWT cho mọi service có resource server (lỗi xác thực trả Problem `UNAUTHENTICATED`/`TOKEN_EXPIRED`); `params.retryAfterSeconds` tự ra header `Retry-After`. `platform-starter-observability` (chỉ gom dependency). Convention Gradle cho service (`bootJar`).
+- Hợp đồng `identity/public.yaml` v0.2.1 (`/challenges` trả `CHALLENGE_REQUIRED`), SRS F-ACC-01 v0.5, README của `source-code`.
+
+**Kiểm chứng (container `gradle:8.14-jdk21`, Postgres + Kafka + Redis thật qua Testcontainers):**
+- `gradle clean build`: đạt, 67/67 test (core 6, messaging 7, web 8, `DomainRulesTest` 21, `IdentityApiTest` 25). Phủ 51 trong 64 TC của F-ACC-01 (chi tiết ở đầu file test case).
+- Lần chạy đầu 1 test fail do lỗi của test (quên thời gian chờ gửi lại 30 giây), không phải của code; đã sửa test.
+- Phá thử hai chỗ (bỏ thu hồi family khi refresh token bị dùng lại; bỏ challenge giả cho SĐT đã đăng ký): đúng 2 test tương ứng fail; đã khôi phục.
+- Redocly lint `identity/public.yaml`: hợp lệ.
+
+**Quyết định / phát hiện:**
+- Challenge giả (SĐT đã đăng ký khi đăng ký, SĐT không có tài khoản khi quên mật khẩu) phải đếm lượt nhập như thật; nếu không, kẻ dò chỉ cần nhập một mã sai là phân biệt được. Bộ đếm của challenge giả nằm ở Redis.
+- Khoá tạm (FR-17) làm lộ SĐT có tài khoản, vì SĐT không tồn tại không bao giờ bị khoá. Đã ghi thêm vào OQ-036.
+- Access token hết hạn đúng tại `exp` (không có độ trễ cho phép), để khớp AC-27.
+- Khoá ký JWT cấu hình bằng JWK (`AUTH_JWT_PRIVATE_JWK`), không phải PEM; thiếu khoá thì sinh khoá tạm, bị cấm ở profile `prod`.
+- Quy tắc che tên trong event (`displayMasked`) là giả định từ ví dụ duy nhất của data model, gói trong một hàm (OQ-009, OQ-047).
+- Lỗi công cụ: heredoc của Bash làm mất một lớp dấu gạch chéo ngược trong chuỗi regex Java. Compiler bắt được 2 chỗ; chỗ thứ ba vẫn compile được (thành một escape hợp lệ khác) nên phải dò tay. Từ đó ghi file Java bằng công cụ Write.
+
+**Chưa kiểm / còn dở:**
+- Chưa qua review độc lập; chưa chạy service thật qua docker compose (mới chạy trong test).
+- Chưa có: adapter thật tới `notification` (M5), luồng khuôn mặt (F-ACC-02) nên đổi SĐT chỉ test được bằng cách ghi DB, thu hồi phiên chủ động khi nhân viên khoá tài khoản (F-BO-02), job dọn token và challenge hết hạn, ẩn danh dữ liệu.
+- 13 TC chưa tự động: TC-ACC-011 (OQ-024), E2E 085..089 (chưa có web), NFR 090..094; TC-ACC-081 (audit) mới phủ 2 trong 9 thao tác.
+- Giới hạn tần suất dùng cửa sổ cố định; một khoá ký, chưa xoay vòng khoá (đều có ghi chú `ponytail:` trong code).
+- Commit `596a526` trên `main` đã kéo nhầm `.claude/settings.json` của phiên khác (file bật plugin, không có bí mật).
+
+---
+
 ## 2026-11-10 — Quyết định phạm vi; test case F-ACC-01
 
 **Quyết định của chủ dự án (qua hộp hỏi):** làm toàn bộ dự án theo mốc M1 → M7; SRS Draft coi là đã duyệt để code (chỗ chưa quyết thành tham số cấu hình, giữ trong open-questions); tự commit và push sau mỗi phần đã kiểm chứng. Đã ghi vào CLAUDE.md.

@@ -34,16 +34,21 @@ public class ProblemExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(PlatformException.class)
     ResponseEntity<Object> handlePlatform(PlatformException e, WebRequest request) {
-        ProblemDetail pd = problem(e.errorCode(), request);
+        ProblemDetail pd = problem(e.errorCode(), request.getHeader("traceparent"));
         if (!e.params().isEmpty()) pd.setProperty("params", e.params());
         if (!e.errors().isEmpty()) pd.setProperty("errors", e.errors());
-        return ResponseEntity.status(e.errorCode().httpStatus()).body(pd);
+        var response = ResponseEntity.status(e.errorCode().httpStatus());
+        // Quy ước: params.retryAfterSeconds (RATE_LIMITED, ACCOUNT_TEMP_LOCKED) cũng ra header Retry-After
+        if (e.params().get("retryAfterSeconds") instanceof Number seconds) {
+            response.header(HttpHeaders.RETRY_AFTER, String.valueOf(Math.max(1, seconds.longValue())));
+        }
+        return response.body(pd);
     }
 
     @ExceptionHandler(Exception.class)
     ResponseEntity<Object> handleUnexpected(Exception e, WebRequest request) {
         log.error("Unhandled exception", e);
-        return ResponseEntity.status(500).body(problem(CommonErrorCode.INTERNAL_ERROR, request));
+        return ResponseEntity.status(500).body(problem(CommonErrorCode.INTERNAL_ERROR, request.getHeader("traceparent")));
     }
 
     /** Lỗi của chính Spring MVC (sai kiểu, thiếu tham số, 404, 405...) cũng phải ra dạng Problem của dự án. */
@@ -56,7 +61,7 @@ public class ProblemExceptionHandler extends ResponseEntityExceptionHandler {
                     : status.is5xxServerError() ? CommonErrorCode.INTERNAL_ERROR : CommonErrorCode.VALIDATION_ERROR;
             pd.setType(typeUri(code));
             pd.setProperty("code", code.code());
-            pd.setProperty("traceId", traceId(request));
+            pd.setProperty("traceId", traceId(request.getHeader("traceparent")));
             if (ex instanceof MethodArgumentNotValidException invalid) {
                 List<FieldError> errors = invalid.getBindingResult().getFieldErrors().stream()
                         .map(f -> new FieldError(f.getField(), String.valueOf(f.getCode()), f.getDefaultMessage()))
@@ -67,12 +72,13 @@ public class ProblemExceptionHandler extends ResponseEntityExceptionHandler {
         return response;
     }
 
-    private ProblemDetail problem(ErrorCode code, WebRequest request) {
+    /** Dùng chung cho mọi nơi trả lỗi ngoài controller (ví dụ entry point của bảo mật). */
+    public static ProblemDetail problem(ErrorCode code, String traceparent) {
         ProblemDetail pd = ProblemDetail.forStatus(code.httpStatus());
         pd.setType(typeUri(code));
         pd.setTitle(title(code));
         pd.setProperty("code", code.code());
-        pd.setProperty("traceId", traceId(request));
+        pd.setProperty("traceId", traceId(traceparent));
         return pd;
     }
 
@@ -86,10 +92,9 @@ public class ProblemExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /** MDC (do observability starter đặt) > trace-id trong {@code traceparent} > id ngẫu nhiên. */
-    static String traceId(WebRequest request) {
+    static String traceId(String traceparent) {
         String fromMdc = MDC.get("traceId");
         if (fromMdc != null) return fromMdc;
-        String traceparent = request.getHeader("traceparent");
         if (traceparent != null) {
             String[] parts = traceparent.split("-");
             if (parts.length == 4 && parts[1].length() == 32) return parts[1];

@@ -54,6 +54,11 @@ class ProblemWebTest {
                 throw new PlatformException(TestCode.LIMIT_EXCEEDED, Map.of("remaining", 5_000));
             }
 
+            @GetMapping("/slow-down")
+            void slowDown() {
+                throw new PlatformException(com.ewallet.platform.core.error.CommonErrorCode.RATE_LIMITED, Map.of("retryAfterSeconds", 30));
+            }
+
             @GetMapping("/boom")
             void boom() {
                 throw new IllegalStateException("jdbc:postgresql://secret-host/db password=hunter2");
@@ -107,6 +112,14 @@ class ProblemWebTest {
                 .andExpect(jsonPath("$.code").value("LIMIT_EXCEEDED"))
                 .andExpect(jsonPath("$.params.remaining").value(5_000))
                 .andExpect(jsonPath("$.type").value("https://ewallet/errors/limit-exceeded"));
+    }
+
+    @Test
+    void retryAfterSecondsParamBecomesRetryAfterHeader() throws Exception {
+        mvc.perform(get("/slow-down"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Retry-After", "30"))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"));
     }
 
     @Test

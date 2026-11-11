@@ -1,12 +1,15 @@
 # source-code
 
-Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**, chưa có service nghiệp vụ nào.
+Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**; service đầu tiên là `identity` (F-ACC-01). Chưa có gateway và frontend.
 
 ```
 platform/
   platform-starter-core       Money, UUIDv7, Sensitive, ErrorCode/PlatformException, chặn @FakeProvider ở profile prod
-  platform-starter-web        Problem (RFC 9457) + code + traceId, tham số IdempotencyKey bắt buộc
+  platform-starter-web        Problem (RFC 9457) + code + traceId, tham số IdempotencyKey bắt buộc, kiểm JWT (resource server)
   platform-starter-messaging  outbox + relay, inbox, consumer idempotent, retry + DLT, migration outbox/inbox/shedlock
+  platform-starter-observability  actuator + Prometheus + tracing W3C (chỉ gom dependency)
+services/
+  identity                    đăng ký, đăng nhập, phiên, mật khẩu, thiết bị, challenge OTP (F-ACC-01); cổng 8101
 contracts/                    OpenAPI + JSON Schema event (nguồn sự thật của hợp đồng)
 buildSrc/                     cấu hình Gradle dùng chung; phiên bản thư viện lấy từ BOM của Spring Boot ở đây
 deploy/local/                 script khởi tạo database cho docker compose
@@ -51,6 +54,19 @@ docker run --rm -v "${PWD}:/p" -v ewallet-gradle-cache:/home/gradle/.gradle \
 - Docker Engine 29 từ chối API version cũ nên cần Testcontainers >= 1.21.4; `buildSrc` đã ghi đè phiên bản (bỏ khi Spring Boot quản lý bản mới hơn).
 - Test messaging in cảnh báo "Connection refused" ở cuối: container dừng trước khi relay dừng. Vô hại.
 
+## Chạy `identity` ở local
+
+```
+docker compose up -d --wait postgres kafka redis
+./gradlew :services:identity:bootRun        # cần JDK 21; không có thì chạy bằng container Gradle như mục trên
+```
+
+- OTP và thông báo không gửi đi đâu: provider giả giữ trong bộ nhớ. Xem tại `GET http://localhost:8101/internal/dev/messages?recipient=%2B84900000001` (không có ở profile `prod`).
+- Không cấu hình `AUTH_JWT_PRIVATE_JWK` và `AUTH_HMAC_KEY` thì service sinh khoá tạm: token và thiết bị tin cậy mất hiệu lực mỗi lần khởi động lại. Profile `prod` bắt buộc có hai khoá này.
+- Mọi tham số `auth.*` trong `application.yml` (hạn OTP, số lần khoá, hạn phiên, giới hạn tần suất...) là số minh hoạ của SRS, chưa chốt (OQ-035, OQ-036).
+- `/internal/**` không cần JWT ở tầng ứng dụng (mesh mTLS sẽ chặn); ở local ai tới được cổng 8101 cũng gọi được.
+- Chưa có adapter thật tới `notification` (mốc M5), chưa có luồng khuôn mặt (F-ACC-02) nên đổi SĐT chưa đi hết được.
+
 ## Cách service dùng các starter
 
 1. Thêm `implementation(project(":platform:platform-starter-web"))` và `...-messaging` vào build của service.
@@ -59,7 +75,8 @@ docker run --rm -v "${PWD}:/p" -v ewallet-gradle-cache:/home/gradle/.gradle \
 4. Nhận event: `processor.process(value, "<tên-handler>", event -> ...)` trong `@KafkaListener`. Handler lỗi thì thử lại rồi vào `<topic>.dlt`; event sai định dạng vào thẳng DLT.
 5. Controller lệnh tiền khai báo tham số `IdempotencyKey`; tra khoá trong DB là bước đầu của use case.
 6. Provider giả đánh dấu `@FakeProvider`.
+7. Thêm `spring-boot-starter-oauth2-resource-server` thì service tự kiểm JWT của khách; đường dẫn công khai khai báo ở `ewallet.security.public-paths`. Service khác `identity` đặt `spring.security.oauth2.resourceserver.jwt.jwk-set-uri` trỏ tới JWKS của `identity` và `jws-algorithms: ES256`.
 
 ## Chưa làm trong M1 (theo design §12.4)
 
-`platform-bom` riêng (hiện dùng BOM Spring Boot trong `buildSrc`), security resource server (cần JWKS của `identity`), observability starter (OpenTelemetry, log JSON, `traceparent` vào event), sinh client từ OpenAPI, service `identity`, `api-gateway`, `frontend/`, Helm, CI, mesh. Serializer Schema Registry cho event: hiện gửi JSON thường, Schema Registry mới chỉ có trong compose.
+`platform-bom` riêng (hiện dùng BOM Spring Boot trong `buildSrc`), phần còn lại của observability (log JSON, `traceparent` vào event, exporter OTLP), sinh client từ OpenAPI, `api-gateway`, `frontend/`, Helm, CI, mesh. Serializer Schema Registry cho event: hiện gửi JSON thường, Schema Registry mới chỉ có trong compose.

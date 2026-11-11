@@ -14,6 +14,12 @@
 | NFR | 5 |
 | **Cộng** | **64** |
 
+## Trạng thái tự động hoá (2026-11-10)
+
+- **Đã có test tự động, đang pass** (`source-code/services/identity/src/test/`): UNIT TC-ACC-001..006 (`DomainRulesTest`); INTEGRATION TC-ACC-010, 012 và API TC-ACC-020..026, 030..036, 040..055, 060..063, 065..068, 070..072, 075, 076, 080 (`IdentityApiTest`, tên test chứa ID).
+- **Mới phủ một phần:** TC-ACC-032 (thiếu dòng c), TC-ACC-055 (chỉ nhánh `LOCKED`), TC-ACC-081 (mới kiểm audit của đăng ký và dùng lại refresh token), TC-ACC-065/067 (khuôn mặt dựng bằng ghi DB).
+- **Chưa có:** TC-ACC-011 (BLOCKED), E2E TC-ACC-085..089 (chưa có web), NFR TC-ACC-090..094.
+
 ## Dữ liệu & môi trường test
 
 **Cấu hình mặc định** (giá trị minh hoạ của SRS §7, chưa chốt trừ `auth.access.ttl`; xem OQ-036):

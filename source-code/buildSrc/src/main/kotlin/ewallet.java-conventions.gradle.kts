@@ -14,7 +14,12 @@ repositories { mavenCentral() }
 extra["testcontainers.version"] = "1.21.4"
 
 dependencyManagement {
-    imports { mavenBom("org.springframework.boot:spring-boot-dependencies:3.5.7") }
+    imports {
+        mavenBom("org.springframework.boot:spring-boot-dependencies:3.5.7")
+        mavenBom("org.springframework.cloud:spring-cloud-dependencies:2025.0.0") // gateway
+    }
+    // Thư viện Spring Boot không quản lý phiên bản
+    dependencies { dependency("org.bouncycastle:bcprov-jdk18on:1.78.1") } // Argon2id của Spring Security cần
 }
 
 tasks.withType<JavaCompile>().configureEach {
