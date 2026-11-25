@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+/* Token của design system (docs/ui/design-system.md §2). Màu thương hiệu chưa chốt: giá trị tạm. Chưa có dark mode. */
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a;
+  --primary: #1d4ed8;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9;
+  --muted-foreground: #475569;
+  --destructive: #b91c1c;
+  --success: #15803d;
+  --info: #0369a1;
+  --border: #cbd5e1;
+  --input: #94a3b8;
+  --ring: #2563eb;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-info: var(--info);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  /* Be Vietnam Pro qua next/font cần tải từ Google Fonts lúc build; tạm dùng font hệ thống */
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}

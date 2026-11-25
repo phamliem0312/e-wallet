@@ -4,6 +4,19 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-25 — UI F-ACC-01 và web BFF (M1) trên nhánh `feat/M1-web`
+
+**Làm:**
+- `docs/ui/features/F-ACC-01-dang-ky-dang-nhap.md`: 9 màn hình (đổi SĐT chưa thiết kế, chờ F-ACC-02), ánh xạ 15 mã lỗi. Quyết định: OTP nằm cùng màn hình với mật khẩu vì API không có bước chỉ xác minh OTP; gửi lại mã khi đăng nhập thiết bị mới phải gọi lại `login`, nên mật khẩu chỉ giữ trong state của trang.
+- `source-code/frontend/apps/web` (Next.js 15.5, Tailwind): trang đăng ký, đăng nhập (kèm bước OTP thiết bị mới), quên mật khẩu, tài khoản, đổi mật khẩu, thiết bị và đồng ý. BFF là một route handler proxy có danh sách cho phép: token chỉ nằm trong cookie httpOnly, CSRF kiểu double-submit, dấu vân tay thiết bị là UUID trong cookie httpOnly, làm mới phiên một lần khi gặp 401. CSP, HSTS qua `next.config.ts`.
+
+**Kiểm chứng:** `tsc --noEmit`, `eslint`, `next build` đều sạch. **Chưa chạy end-to-end** với `identity` và `api-gateway` thật (bị ngắt giữa lúc build jar); chưa có test tự động cho web.
+
+**Lệch so với design system:** registry của shadcn/ui bị mạng công ty chặn, nên component viết tay bằng Tailwind (giữ tên và hành vi); không dùng react-hook-form + Zod; ô OTP là một ô 6 chữ số thay vì 6 ô; font hệ thống thay cho Be Vietnam Pro (tải Google Fonts lúc build có thể bị chặn).
+
+**Còn dở:** chạy thử end-to-end; test UI (Vitest) và E2E (Playwright) TC-ACC-085..089; làm mới phiên nhiều tab có thể mất phiên (OQ-037); CSP còn `'unsafe-inline'` cho script; nội dung điều khoản là trang giữ chỗ (OQ-050).
+
+---
 ## 2026-11-11 — `api-gateway` (M1) trên nhánh `feat/M1-api-gateway`
 
 Chủ dự án chọn để phiên này làm tiếp (thay vì luồng `/deliver` của ADR-0002). Nhánh tách từ `feat/F-ACC-01-identity-service`, nên cũng chưa merge: hai nhánh chờ review độc lập.
