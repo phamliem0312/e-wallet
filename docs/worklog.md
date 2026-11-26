@@ -4,6 +4,21 @@ Ghi theo thứ tự thời gian, mục mới nhất ở trên cùng. Mỗi phầ
 
 ---
 
+## 2026-11-26 — Chạy thử end-to-end M1 (trên nhánh `feat/M1-web`)
+
+**Làm:** chạy cả lát cắt thật: Postgres, Kafka, Redis, `identity` và `api-gateway` (jar trong `eclipse-temurin:21-jre`, thêm vào `docker-compose.yml` profile `apps`), web `next start` trỏ vào gateway. Kịch bản `source-code/scripts/e2e-m1.mjs` giả lập trình duyệt có cookie. Bỏ `output: "standalone"` của web (chưa có Dockerfile, chỉ gây cảnh báo khi `next start`).
+
+**Kiểm chứng:**
+- 35/35 bước đạt: chuyển hướng khi chưa đăng nhập; cookie thiết bị, CSRF, phiên đều HttpOnly + SameSite=Lax; CSP và HSTS; POST thiếu CSRF bị 403; đăng ký (thiếu đồng ý → `CONSENT_REQUIRED`), body trả trình duyệt không có token; thiết bị và đồng ý; đăng xuất; sai mật khẩu; đăng nhập thiết bị đã biết không cần OTP; thiết bị mới qua OTP; BFF tự làm mới phiên; đổi mật khẩu thu hồi phiên khác, giữ phiên hiện tại; quên và đặt lại mật khẩu thu hồi mọi phiên; gateway không định tuyến `/internal/**`, chặn `/me` khi không có token; BFF không chuyển đường dẫn ngoài danh sách.
+- Outbox của `identity`: 2 `CustomerRegistered` và 16 `AuditRecorded`, tất cả đã relay; đọc được `CustomerRegistered` dạng CloudEvents trên topic `identity.events`.
+- Lần chạy đầu 33/34: một bước của kịch bản sai, không phải lỗi hệ thống. Sau khi đặt lại mật khẩu, access token JWT cũ còn dùng được tới khi hết hạn (tối đa 5 phút); refresh token thì đã bị thu hồi. Đúng FR-31 và design §10; đã sửa kịch bản kiểm cả hai ý.
+
+**Lưu ý:** cửa sổ 5 phút ở trên là đánh đổi có chủ đích của JWT không trạng thái: khách đổi mật khẩu vì nghi bị lộ thì kẻ đang giữ access token vẫn dùng được tới 5 phút.
+
+**Chưa kiểm:** giao diện thật trong trình duyệt (kịch bản chỉ gọi BFF như trình duyệt, không render trang, không kiểm accessibility); test Playwright cho TC-ACC-085..089; nhiều tab làm mới cùng lúc (OQ-037); chạy trên HTTPS (cookie `Secure`).
+
+---
+
 ## 2026-11-25 — UI F-ACC-01 và web BFF (M1) trên nhánh `feat/M1-web`
 
 **Làm:**

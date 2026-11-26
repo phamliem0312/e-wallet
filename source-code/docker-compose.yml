@@ -67,5 +67,35 @@ services:
       timeout: 3s
       retries: 20
 
+  # ---- Ứng dụng (profile "apps"): chạy jar đã build bằng `gradle :services:identity:bootJar :gateways:api-gateway:bootJar`.
+  # docker compose --profile apps up -d       Web chạy trên máy: xem source-code/README.md
+  identity:
+    profiles: [apps]
+    image: eclipse-temurin:21-jre
+    command: ["java", "-jar", "/app/app.jar"]
+    volumes: ["./services/identity/build/libs/identity.jar:/app/app.jar:ro"]
+    environment:
+      DB_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      REDIS_HOST: redis
+    ports: ["${IDENTITY_PORT:-8101}:8101"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  api-gateway:
+    profiles: [apps]
+    image: eclipse-temurin:21-jre
+    command: ["java", "-jar", "/app/app.jar"]
+    volumes: ["./gateways/api-gateway/build/libs/api-gateway.jar:/app/app.jar:ro"]
+    environment:
+      IDENTITY_URI: http://identity:8101
+      REDIS_HOST: redis
+    ports: ["${GATEWAY_PORT:-8080}:8080"]
+    depends_on:
+      redis: { condition: service_healthy }
+      identity: { condition: service_started }
+
 volumes:
   pg-data:

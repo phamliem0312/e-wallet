@@ -1,6 +1,6 @@
 # source-code
 
-Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**; đã có `identity` (F-ACC-01) và `api-gateway`. Chưa có frontend.
+Monorepo backend (Java 21, Spring Boot 3.5, Gradle Kotlin DSL) và hợp đồng API. Trạng thái: **nền tảng M1 đang dựng**; đã có `identity` (F-ACC-01), `api-gateway` và web BFF (`frontend/apps/web`); lát cắt end-to-end M1 đã chạy thử.
 
 ```
 platform/
@@ -68,6 +68,18 @@ docker compose up -d --wait postgres kafka redis
 - Mọi tham số `auth.*` trong `application.yml` (hạn OTP, số lần khoá, hạn phiên, giới hạn tần suất...) là số minh hoạ của SRS, chưa chốt (OQ-035, OQ-036).
 - `/internal/**` không cần JWT ở tầng ứng dụng (mesh mTLS sẽ chặn); ở local ai tới được cổng 8101 cũng gọi được.
 - Chưa có adapter thật tới `notification` (mốc M5), chưa có luồng khuôn mặt (F-ACC-02) nên đổi SĐT chưa đi hết được.
+
+## Chạy thử end-to-end M1 (trình duyệt → web → api-gateway → identity)
+
+```
+gradle :services:identity:bootJar :gateways:api-gateway:bootJar   # hoặc qua container Gradle như trên
+docker compose --profile apps up -d postgres kafka redis identity api-gateway
+cd frontend/apps/web && npm install && npm run build
+GATEWAY_URL=http://localhost:8080 COOKIE_SECURE=false npx next start -p 3000
+node scripts/e2e-m1.mjs        # từ thư mục source-code, khi cả ba đang chạy
+```
+
+`scripts/e2e-m1.mjs` giả lập trình duyệt (có cookie): đăng ký, đăng nhập, thiết bị mới qua OTP, làm mới phiên, đổi và đặt lại mật khẩu, đăng xuất, CSRF, tiêu đề bảo mật, biên của gateway. OTP đọc từ provider giả của `identity` (cổng 8101). Kịch bản có một bước chờ 31 giây (thời gian chờ gửi lại OTP).
 
 ## Cách service dùng các starter
 
